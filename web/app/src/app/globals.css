@@ -1,0 +1,194 @@
+@import './markdown.css';
+@import '@ctzhian/tiptap/dist/index.css';
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+:root {
+  --niu-blue: #0071e3;
+  --niu-blue-bright: #2997ff;
+  --niu-ink: #1d1d1f;
+  --niu-muted: #6e6e73;
+  --niu-surface: rgba(255, 255, 255, 0.76);
+  --niu-hairline: rgba(29, 29, 31, 0.09);
+  --niu-shadow: 0 24px 80px rgba(0, 0, 0, 0.09);
+  --niu-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+body {
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    var(--font-gilory),
+    'PingFang SC',
+    sans-serif !important;
+  min-height: 100vh;
+  color: #1d1d1f;
+  background: #fff;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+body.dark {
+  color: #f5f5f7;
+  background: #000;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: #fff;
+}
+
+body.dark {
+  --niu-surface: rgba(28, 28, 30, 0.76);
+  --niu-hairline: rgba(255, 255, 255, 0.12);
+  --niu-shadow: 0 28px 90px rgba(0, 0, 0, 0.42);
+}
+
+::selection {
+  color: #fff;
+  background: rgba(0, 122, 255, 0.82);
+}
+
+button,
+a,
+input,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 3px solid rgba(0, 113, 227, 0.28);
+  outline-offset: 3px;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+@keyframes loadingRotate {
+  from {
+    transform: rotate(0);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes niu-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 24px, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes niu-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  50% {
+    transform: translate3d(0, -12px, 0) scale(1.03);
+  }
+}
+
+.niu-rise {
+  animation: niu-rise 0.8s var(--niu-ease) both;
+}
+
+.niu-glass {
+  background: var(--niu-surface);
+  border: 1px solid var(--niu-hairline);
+  box-shadow: var(--niu-shadow);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+[class^='ellipsis-'] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ellipsis-1 {
+  -webkit-line-clamp: 1;
+}
+
+.ellipsis-2 {
+  -webkit-line-clamp: 2;
+}
+
+.ellipsis-3 {
+  -webkit-line-clamp: 3;
+}
+
+.ellipsis-4 {
+  -webkit-line-clamp: 4;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  /* 纵向滚动条*/
+  height: 0;
+  /* 横向滚动条隐藏 */
+  border-radius: 10px;
+}
+
+/*定义滚动条轨道 内阴影*/
+::-webkit-scrollbar-track {
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0);
+  background-color: transparent;
+  border-radius: 10px;
+}
+
+/*定义滑块 内阴影*/
+::-webkit-scrollbar-thumb {
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0);
+  background-color: rgba(60, 60, 67, 0.25);
+  border-radius: 10px;
+}
+
+/*定义滚动条轨道 内阴影*/
+.dark ::-webkit-scrollbar-track {
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0);
+  background-color: #363636;
+  border-radius: 10px;
+}
+
+/*定义滑块 内阴影*/
+.dark ::-webkit-scrollbar-thumb {
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0);
+  background-color: #9b9b9b;
+  border-radius: 10px;
+}

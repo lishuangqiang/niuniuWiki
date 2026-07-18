@@ -1,0 +1,79 @@
+name: Backend Pull Request Check
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+
+permissions:
+  contents: read
+
+jobs:
+  java-verify:
+    name: Java 21 build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+      - name: Verify
+        working-directory: backend
+        run: ./mvnw -B clean verify
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [api, consumer]
+    timeout-minutes: 30
+
+    outputs:
+      version: ${{ steps.get_version.outputs.VERSION }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            if [[ $GITHUB_REF == refs/tags/backend-* ]]; then
+              echo "VERSION=${GITHUB_REF#refs/tags/backend-}" >> $GITHUB_OUTPUT
+            else
+              echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "VERSION=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: 'arm64,amd64'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile.${{ matrix.service }}
+          push: false
+          platforms: linux/amd64, linux/arm64
+          tags: chaitin-registry.cn-hangzhou.cr.aliyuncs.com/chaitin/niuniu-wiki-${{ matrix.service }}:${{ steps.get_version.outputs.VERSION }}
+          build-args: |
+            VERSION=${{ steps.get_version.outputs.VERSION }}
+          cache-from: |
+            type=gha,scope=${{ matrix.service }}
+          cache-to: |
+            type=gha,scope=${{ matrix.service }},mode=max

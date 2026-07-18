@@ -1,0 +1,79 @@
+server:
+  port: ${HTTP_PORT:8000}
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        same-site: lax
+
+spring:
+  application:
+    name: niuniu-wiki-api
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://niuniu-wiki-postgres:5432/niuniu-wiki}
+    username: ${SPRING_DATASOURCE_USERNAME:niuniu-wiki}
+    password: ${POSTGRES_PASSWORD:niuniu-wiki-secret}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:20}
+      minimum-idle: ${DB_MIN_IDLE:2}
+  data:
+    redis:
+      host: ${REDIS_HOST:niuniu-wiki-redis}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    baseline-on-migrate: true
+    # Existing Go installations already have all 38 migrations. Empty schemas
+    # still run V1..V38; non-empty legacy schemas are marked at V38.
+    baseline-version: 38
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: non_null
+  servlet:
+    multipart:
+      max-file-size: ${MAX_FILE_SIZE:200MB}
+      max-request-size: ${MAX_REQUEST_SIZE:200MB}
+
+mybatis:
+  configuration:
+    call-setters-on-nulls: true
+    jdbc-type-for-null: NULL
+    map-underscore-to-camel-case: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+niuniu-wiki:
+  admin-password: ${ADMIN_PASSWORD:}
+  read-only: ${READ_ONLY:false}
+  auth:
+    jwt-secret: ${JWT_SECRET:change-me-before-production}
+    token-ttl-seconds: ${JWT_TTL_SECONDS:86400}
+  rag:
+    base-url: ${RAG_CT_RAG_BASE_URL:http://169.254.15.18:5050}
+    api-key: ${RAG_CT_RAG_API_KEY:sk-1234567890}
+  storage:
+    endpoint: ${S3_ENDPOINT:http://niuniu-wiki-minio:9000}
+    access-key: ${S3_ACCESS_KEY:s3niuniu-wiki}
+    secret-key: ${S3_SECRET_KEY:}
+    bucket: ${S3_BUCKET:static-file}
+  messaging:
+    nats-url: ${MQ_NATS_SERVER:nats://169.254.15.13:4222}
+    username: ${MQ_NATS_USER:niuniu-wiki}
+    password: ${NATS_PASSWORD:}
+  crawler:
+    base-url: ${CRAWLER_BASE_URL:http://niuniu-wiki-crawler:8080}
+    uploader-url: ${CRAWLER_UPLOADER_URL:http://niuniu-wiki-api:8000/api/v1/file/upload/anydoc}
+
+logging:
+  level:
+    root: ${LOG_LEVEL:INFO}
