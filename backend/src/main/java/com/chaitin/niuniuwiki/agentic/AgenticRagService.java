@@ -3,7 +3,7 @@ package com.chaitin.niuniuwiki.agentic;
 import com.chaitin.niuniuwiki.agentic.AdaptiveQueryPlanner.PlanningResult;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.AgentEvent;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.AgentEventSink;
-import com.chaitin.niuniuwiki.agentic.AgenticRagModels.Evidence;
+import com.chaitin.niuniuwiki.retrieval.Evidence;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.Reflection;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.RetrievalBudget;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.RetrievalMode;
@@ -13,6 +13,7 @@ import com.chaitin.niuniuwiki.agentic.AgenticRagModels.RunResult;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.UsageSnapshot;
 import com.chaitin.niuniuwiki.common.ApiException;
 import com.chaitin.niuniuwiki.common.CancellationSignal;
+import com.chaitin.niuniuwiki.security.KnowledgeAccessScope;
 import jakarta.annotation.PreDestroy;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -30,6 +31,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.Semaphore;
 import org.springframework.stereotype.Service;
 
 /**
@@ -46,6 +48,7 @@ public class AgenticRagService {
     private final EvidenceSufficiencyEvaluator evaluator;
     private final AgenticRagStore store;
     private final ExecutorService retrievalExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    private final Semaphore concurrentRetrievals = new Semaphore(24, true);
 
     public AgenticRagService(
             AdaptiveQueryPlanner planner,
@@ -66,6 +69,7 @@ public class AgenticRagService {
     ) {
         store.createRun(request);
         try {
+            store.heartbeat(request.runId());
             emit(sink, AgentEvent.of(request.runId(), "understand", "RUNNING",
                     "正在理解问题并选择检索策略", 0, null, List.of(), Map.of()), Map.of(), Map.of());
             PlanningResult planning = planner.plan(request.question(), request.history(), cancellationSignal);
@@ -113,6 +117,7 @@ public class AgenticRagService {
     public RunResult resume(
             String runId,
             String kbId,
+            KnowledgeAccessScope accessScope,
             AgentEventSink sink,
             CancellationSignal cancellationSignal
     ) {
@@ -127,6 +132,9 @@ public class AgenticRagService {
         if (!List.of("PAUSED", "FAILED", "CANCELLED", "RUNNING", "GENERATING").contains(status)) {
             throw new ApiException("当前 Agent 运行不可恢复");
         }
+        if (!store.resume(runId)) {
+            throw new ApiException("Agent 运行正在其他实例执行或租约尚未过期");
+        }
         RetrievalPlan plan = plan(run);
         RetrievalBudget budget = budget(run, plan.mode());
         UsageSnapshot previousUsage = usage(run);
@@ -136,7 +144,6 @@ public class AgenticRagService {
         EvidenceAccumulator evidence = new EvidenceAccumulator();
         evidence.addAll(store.evidence(runId).stream().map(this::evidence).toList());
         guard.evidenceCount(evidence.size());
-        store.resume(runId);
         emit(sink, AgentEvent.of(runId, "resume", "COMPLETED",
                 "已恢复上次中断的检索状态", previousUsage.iterations(), plan.mode(), List.of(),
                 Map.of("retrievals", previousUsage.retrievals(), "evidence_count", evidence.size())),
@@ -153,7 +160,7 @@ public class AgenticRagService {
             return new RunResult(runId, plan, budget, guard.snapshot(), List.of(), "", guard.remainingTokens());
         }
         RunRequest request = new RunRequest(runId, kbId, value(run.get("conversation_id")),
-                value(run.get("user_message_id")), value(run.get("question")), List.of());
+                value(run.get("user_message_id")), value(run.get("question")), List.of(), accessScope);
         List<String> nextQueries = new ArrayList<>(plan.seedQueries());
         if (previousUsage.iterations() > 0) {
             nextQueries.add(request.question() + " 尚未覆盖的关系、边界条件与下游影响");
@@ -187,6 +194,7 @@ public class AgenticRagService {
         int stagnantIterations = 0;
         try {
             while (!queries.isEmpty() && guard.beginIteration()) {
+                store.heartbeat(request.runId());
                 int iteration = guard.snapshot().iterations();
                 List<String> scheduled = new ArrayList<>();
                 for (String query : queries) {
@@ -207,7 +215,17 @@ public class AgenticRagService {
                 List<QueryFuture> futures = new ArrayList<>();
                 for (String query : scheduled) {
                     Future<List<Evidence>> future = retrievalExecutor.submit(
-                            () -> retriever.retrieve(request.kbId(), query, iteration, cancellationSignal));
+                            () -> {
+                                if (!concurrentRetrievals.tryAcquire(2, TimeUnit.SECONDS)) {
+                                    throw new ApiException("检索服务繁忙，请稍后重试");
+                                }
+                                try {
+                                    return retriever.retrieve(request.kbId(), query, iteration,
+                                            request.accessScope(), cancellationSignal);
+                                } finally {
+                                    concurrentRetrievals.release();
+                                }
+                            });
                     futures.add(new QueryFuture(query, future));
                 }
                 int before = evidence.size();

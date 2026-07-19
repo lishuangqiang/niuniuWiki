@@ -18,7 +18,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,7 +34,7 @@ public class KnowledgeBaseService {
 
     private static final double MAX_POSITION = 1e38;
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final AuthService authService;
     private final RagClient ragClient;
@@ -43,7 +43,7 @@ public class KnowledgeBaseService {
 
     @Autowired
     public KnowledgeBaseService(
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             AuthService authService,
             RagClient ragClient,
@@ -59,7 +59,7 @@ public class KnowledgeBaseService {
     }
 
     public KnowledgeBaseService(
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             AuthService authService,
             RagClient ragClient,

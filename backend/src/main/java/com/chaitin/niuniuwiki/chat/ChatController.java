@@ -2,22 +2,15 @@ package com.chaitin.niuniuwiki.chat;
 
 import com.chaitin.niuniuwiki.captcha.CaptchaService;
 import com.chaitin.niuniuwiki.common.ApiResponse;
-import com.chaitin.niuniuwiki.common.JsonMaps;
 import com.chaitin.niuniuwiki.conversation.ConversationService;
 import com.chaitin.niuniuwiki.share.ShareAccessService;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.chaitin.niuniuwiki.security.KnowledgeAccessScope;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import java.io.IOException;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import org.springframework.http.MediaType;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -41,9 +34,7 @@ public class ChatController {
     private final ConversationService conversationService;
     private final ShareAccessService accessService;
     private final CaptchaService captchaService;
-    private final ObjectMapper objectMapper;
-    private final MyBatisStore store;
-    private final JsonMaps jsonMaps;
+    private final ApiBotChatService apiBotChatService;
 
     public ChatController(
             ChatService chatService,
@@ -51,18 +42,14 @@ public class ChatController {
             ConversationService conversationService,
             ShareAccessService accessService,
             CaptchaService captchaService,
-            ObjectMapper objectMapper,
-            MyBatisStore store,
-            JsonMaps jsonMaps
+            ApiBotChatService apiBotChatService
     ) {
         this.chatService = chatService;
         this.chatStreamService = chatStreamService;
         this.conversationService = conversationService;
         this.accessService = accessService;
         this.captchaService = captchaService;
-        this.objectMapper = objectMapper;
-        this.store = store;
-        this.jsonMaps = jsonMaps;
+        this.apiBotChatService = apiBotChatService;
     }
 
     @PostMapping(value = "/message", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -91,9 +78,10 @@ public class ChatController {
             @RequestBody Map<String, Object> request,
             HttpSession session
     ) {
-        accessService.authorize(kbId, session);
+        KnowledgeAccessScope accessScope = accessService.scope(kbId, session);
         captchaService.verify(String.valueOf(request.getOrDefault("captcha_token", "")));
-        return ApiResponse.ok(Map.of("node_result", chatService.search(kbId, String.valueOf(request.getOrDefault("message", "")))));
+        return ApiResponse.ok(Map.of("node_result", chatService.search(
+                kbId, String.valueOf(request.getOrDefault("message", "")), accessScope)));
     }
 
     @PostMapping("/widget/search")
@@ -132,14 +120,14 @@ public class ChatController {
             HttpServletRequest servletRequest,
             HttpSession session
     ) {
-        accessService.authorize(kbId, session);
+        KnowledgeAccessScope accessScope = accessService.scope(kbId, session);
         captchaService.verify(String.valueOf(request.getOrDefault("captcha_token", "")));
         String runId = String.valueOf(request.getOrDefault("run_id", ""));
         if (runId.isBlank()) {
             throw new com.chaitin.niuniuwiki.common.ApiException("run_id cannot be empty");
         }
         return chatStreamService.resume(kbId, runId,
-                String.valueOf(request.getOrDefault("nonce", "")), servletRequest.getRemoteAddr());
+                String.valueOf(request.getOrDefault("nonce", "")), servletRequest.getRemoteAddr(), accessScope);
     }
 
     @PostMapping("/completions")
@@ -149,43 +137,7 @@ public class ChatController {
             @RequestBody Map<String, Object> request,
             HttpServletRequest servletRequest
     ) {
-        validateApiBot(kbId, authorization);
-        String lastUserMessage = lastUserMessage(request);
-        ChatService.ChatResult result = chatService.ask(
-                kbId, 9, lastUserMessage, "", "", servletRequest.getRemoteAddr(), List.of(), List.of());
-        String model = String.valueOf(request.getOrDefault("model", "niuniu-wiki"));
-        String id = "chatcmpl-" + UUID.randomUUID().toString().replace("-", "");
-        long created = Instant.now().getEpochSecond();
-        if (Boolean.TRUE.equals(request.get("stream"))) {
-            SseEmitter emitter = new SseEmitter(120_000L);
-            try {
-                Map<String, Object> chunk = Map.of(
-                        "id", id,
-                        "object", "chat.completion.chunk",
-                        "created", created,
-                        "model", model,
-                        "choices", List.of(Map.of(
-                                "index", 0,
-                                "delta", Map.of("role", "assistant", "content", result.answer()),
-                                "finish_reason", "stop")));
-                emitter.send(SseEmitter.event().data(objectMapper.writeValueAsString(chunk)));
-                emitter.send(SseEmitter.event().data("[DONE]"));
-                emitter.complete();
-            } catch (IOException exception) {
-                emitter.completeWithError(exception);
-            }
-            return emitter;
-        }
-        return Map.of(
-                "id", id,
-                "object", "chat.completion",
-                "created", created,
-                "model", model,
-                "choices", List.of(Map.of(
-                        "index", 0,
-                        "message", Map.of("role", "assistant", "content", result.answer()),
-                        "finish_reason", "stop")),
-                "usage", Map.of("prompt_tokens", 0, "completion_tokens", 0, "total_tokens", 0));
+        return apiBotChatService.completions(kbId, authorization, request, servletRequest.getRemoteAddr());
     }
 
     private SseEmitter chat(
@@ -196,7 +148,7 @@ public class ChatController {
             HttpSession session,
             boolean requireCaptcha
     ) {
-        accessService.authorize(kbId, session);
+        KnowledgeAccessScope accessScope = accessService.scope(kbId, session);
         if (requireCaptcha) {
             captchaService.verify(String.valueOf(request.getOrDefault("captcha_token", "")));
         }
@@ -208,33 +160,8 @@ public class ChatController {
                 String.valueOf(request.getOrDefault("nonce", "")),
                 servletRequest.getRemoteAddr(),
                 stringList(request.get("image_paths")),
-                attachments(request.get("attachments")));
-    }
-
-    private void validateApiBot(String kbId, String authorization) {
-        accessService.settings(kbId);
-        if (authorization == null || !authorization.startsWith("Bearer ")) {
-            throw new com.chaitin.niuniuwiki.common.ApiException("Authorization header is required");
-        }
-        String expected = apiBotSecret(kbId);
-        if (expected.isBlank() || !expected.equals(authorization.substring(7))) {
-            throw new com.chaitin.niuniuwiki.common.ApiException("Invalid Authorization key");
-        }
-    }
-
-    private String apiBotSecret(String kbId) {
-        List<Map<String, Object>> apps = store.query(
-                "SELECT settings FROM apps WHERE kb_id = ? AND type = 9",
-                store.rowMapper(), kbId);
-        if (apps.isEmpty()) {
-            return "";
-        }
-        Map<String, Object> settings = jsonMaps.jsonMap(apps.getFirst().get("settings"));
-        Map<String, Object> api = jsonMaps.jsonMap(settings.get("openai_api_bot_settings"));
-        if (!Boolean.TRUE.equals(api.get("is_enabled"))) {
-            return "";
-        }
-        return String.valueOf(api.getOrDefault("secret_key", ""));
+                attachments(request.get("attachments")),
+                accessScope);
     }
 
     private List<String> stringList(Object value) {
@@ -264,31 +191,6 @@ public class ChatController {
 
     private String stringValue(Object value) {
         return value == null ? "" : String.valueOf(value);
-    }
-
-    private String lastUserMessage(Map<String, Object> request) {
-        Object messagesValue = request.get("messages");
-        if (!(messagesValue instanceof List<?> messages)) {
-            throw new com.chaitin.niuniuwiki.common.ApiException("messages cannot be empty");
-        }
-        for (int index = messages.size() - 1; index >= 0; index--) {
-            if (messages.get(index) instanceof Map<?, ?> message && "user".equals(message.get("role"))) {
-                Object content = message.get("content");
-                if (content instanceof String text) {
-                    return text;
-                }
-                if (content instanceof List<?> parts) {
-                    return parts.stream()
-                            .filter(Map.class::isInstance)
-                            .map(Map.class::cast)
-                            .filter(part -> "text".equals(part.get("type")))
-                            .map(part -> String.valueOf(part.get("text") == null ? "" : part.get("text")))
-                            .reduce((left, right) -> left + " " + right)
-                            .orElse("");
-                }
-            }
-        }
-        throw new com.chaitin.niuniuwiki.common.ApiException("no user message found");
     }
 
 }

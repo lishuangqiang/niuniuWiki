@@ -2,7 +2,7 @@ package com.chaitin.niuniuwiki.node;
 
 import com.chaitin.niuniuwiki.common.ApiException;
 import com.chaitin.niuniuwiki.common.JsonMaps;
-import com.chaitin.niuniuwiki.chat.ChatService;
+import com.chaitin.niuniuwiki.model.ModelGateway;
 import com.chaitin.niuniuwiki.prompt.PromptService;
 import com.chaitin.niuniuwiki.rag.VectorTaskPublisher;
 import com.chaitin.niuniuwiki.security.AuthContext;
@@ -17,7 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,27 +33,27 @@ public class NodeService {
     private static final double MAX_POSITION = 1e38;
     private static final double MIN_GAP = 1e-5;
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final AuthService authService;
     private final VectorTaskPublisher vectorTasks;
-    private final ChatService chatService;
+    private final ModelGateway modelGateway;
     private final PromptService promptService;
 
     @Autowired
     public NodeService(
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             AuthService authService,
             VectorTaskPublisher vectorTasks,
-            ChatService chatService,
+            ModelGateway modelGateway,
             PromptService promptService
     ) {
         this.store = store;
         this.jsonMaps = jsonMaps;
         this.authService = authService;
         this.vectorTasks = vectorTasks;
-        this.chatService = chatService;
+        this.modelGateway = modelGateway;
         this.promptService = promptService;
     }
 
@@ -61,13 +61,13 @@ public class NodeService {
      * 保留给独立迁移测试和旧嵌入调用的构造入口。
      */
     public NodeService(
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             AuthService authService,
             VectorTaskPublisher vectorTasks,
-            ChatService chatService
+            ModelGateway modelGateway
     ) {
-        this(store, jsonMaps, authService, vectorTasks, chatService, null);
+        this(store, jsonMaps, authService, vectorTasks, modelGateway, null);
     }
 
     public List<Map<String, Object>> list(String kbId, String navId, String search) {
@@ -409,7 +409,7 @@ public class NodeService {
         }
         require(request.kbId());
         Map<String, Object> node = detail(request.kbId(), request.ids().getFirst(), "raw");
-        return chatService.rawComplete(
+        return modelGateway.completeText(
                 promptService == null
                         ? PromptService.DEFAULT_SUMMARY_PROMPT
                         : String.valueOf(promptService.getInternal(request.kbId()).get("summary_content")),

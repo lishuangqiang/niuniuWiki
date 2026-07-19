@@ -36,12 +36,6 @@ spring:
       max-file-size: ${MAX_FILE_SIZE:200MB}
       max-request-size: ${MAX_REQUEST_SIZE:200MB}
 
-mybatis:
-  configuration:
-    call-setters-on-nulls: true
-    jdbc-type-for-null: NULL
-    map-underscore-to-camel-case: false
-
 management:
   endpoints:
     web:

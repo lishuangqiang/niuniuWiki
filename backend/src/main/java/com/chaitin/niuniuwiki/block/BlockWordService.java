@@ -7,7 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 
 /**
@@ -19,11 +19,11 @@ import org.springframework.stereotype.Service;
 @Service
 public class BlockWordService {
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final AuthService authService;
 
-    public BlockWordService(MyBatisStore store, JsonMaps jsonMaps, AuthService authService) {
+    public BlockWordService(JdbcMaps store, JsonMaps jsonMaps, AuthService authService) {
         this.store = store;
         this.jsonMaps = jsonMaps;
         this.authService = authService;

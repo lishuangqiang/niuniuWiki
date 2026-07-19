@@ -7,7 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 
 /**
@@ -25,11 +25,11 @@ public class AuthConfigService {
             "id_field", "ldap_server_url", "name_field", "proxy", "scopes",
             "token_url", "user_base_dn", "user_filter", "user_info_url");
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final AuthService authService;
 
-    public AuthConfigService(MyBatisStore store, JsonMaps jsonMaps, AuthService authService) {
+    public AuthConfigService(JdbcMaps store, JsonMaps jsonMaps, AuthService authService) {
         this.store = store;
         this.jsonMaps = jsonMaps;
         this.authService = authService;

@@ -3,7 +3,9 @@ package com.chaitin.niuniuwiki.chat;
 import com.chaitin.niuniuwiki.common.ApiException;
 import com.chaitin.niuniuwiki.common.CancellationSignal;
 import com.chaitin.niuniuwiki.common.JsonMaps;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
+import com.chaitin.niuniuwiki.model.ModelGateway;
+import com.chaitin.niuniuwiki.model.ModelGateway.Completion;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
@@ -34,12 +36,12 @@ import org.springframework.stereotype.Component;
  * @since 2026-07-18
  */
 @Component
-public class ChatModelClient {
+public class ChatModelClient implements ModelGateway {
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() { };
     private static final Logger LOGGER = LoggerFactory.getLogger(ChatModelClient.class);
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final ObjectMapper objectMapper;
     private final Map<String, TokenLimitParameter> learnedTokenParameters = new ConcurrentHashMap<>();
@@ -47,7 +49,7 @@ public class ChatModelClient {
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
-    public ChatModelClient(MyBatisStore store, JsonMaps jsonMaps, ObjectMapper objectMapper) {
+    public ChatModelClient(JdbcMaps store, JsonMaps jsonMaps, ObjectMapper objectMapper) {
         this.store = store;
         this.jsonMaps = jsonMaps;
         this.objectMapper = objectMapper;
@@ -326,18 +328,6 @@ public class ChatModelClient {
 
     private static String value(Object value) {
         return value == null ? "" : String.valueOf(value);
-    }
-
-    public record Completion(
-            String content,
-            int promptTokens,
-            int completionTokens,
-            String provider,
-            String model
-    ) {
-        public int totalTokens() {
-            return Math.max(0, promptTokens) + Math.max(0, completionTokens);
-        }
     }
 
     enum TokenLimitParameter {

@@ -3,7 +3,7 @@ package com.chaitin.niuniuwiki.agentic;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.RetrievalMode;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.RetrievalPlan;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.TokenUsage;
-import com.chaitin.niuniuwiki.chat.ChatModelClient;
+import com.chaitin.niuniuwiki.model.ModelGateway;
 import com.chaitin.niuniuwiki.common.CancellationSignal;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,10 +27,10 @@ public class AdaptiveQueryPlanner {
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() { };
 
-    private final ChatModelClient modelClient;
+    private final ModelGateway modelClient;
     private final ObjectMapper objectMapper;
 
-    public AdaptiveQueryPlanner(ChatModelClient modelClient, ObjectMapper objectMapper) {
+    public AdaptiveQueryPlanner(ModelGateway modelClient, ObjectMapper objectMapper) {
         this.modelClient = modelClient;
         this.objectMapper = objectMapper;
     }
@@ -45,7 +45,7 @@ public class AdaptiveQueryPlanner {
             return new PlanningResult(guarded, new TokenUsage(0, 0));
         }
         try {
-            ChatModelClient.Completion completion = modelClient.complete(
+            ModelGateway.Completion completion = modelClient.complete(
                     systemPrompt(), planningInput(question, history), cancellationSignal, 650, Duration.ofSeconds(18));
             RetrievalPlan modelPlan = parse(completion.content(), question);
             return new PlanningResult(modelPlan,

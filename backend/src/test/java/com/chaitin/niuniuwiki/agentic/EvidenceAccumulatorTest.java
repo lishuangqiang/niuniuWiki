@@ -2,7 +2,7 @@ package com.chaitin.niuniuwiki.agentic;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.chaitin.niuniuwiki.agentic.AgenticRagModels.Evidence;
+import com.chaitin.niuniuwiki.retrieval.Evidence;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -38,6 +38,18 @@ class EvidenceAccumulatorTest {
                 evidence("b:1", "node-b", "q", "third chunk", 0.8)));
 
         assertThat(accumulator.references(8)).hasSize(2);
+    }
+
+    @Test
+    void removesLowScoreDocumentsFromTheAnswerCitationSet() {
+        EvidenceAccumulator accumulator = new EvidenceAccumulator();
+        accumulator.addAll(List.of(
+                evidence("a:1", "node-a", "q", "strong", 0.9),
+                evidence("b:1", "node-b", "q", "weak", 0.1)));
+
+        assertThat(accumulator.references(8))
+                .extracting(reference -> reference.get("node_id"))
+                .containsExactly("node-a");
     }
 
     private static Evidence evidence(

@@ -3,9 +3,11 @@ package com.chaitin.niuniuwiki.share;
 import com.chaitin.niuniuwiki.common.ApiException;
 import com.chaitin.niuniuwiki.common.JsonMaps;
 import jakarta.servlet.http.HttpSession;
+import java.util.List;
 import java.util.Map;
+import com.chaitin.niuniuwiki.security.KnowledgeAccessScope;
 import org.springframework.http.HttpStatus;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 
 /**
@@ -17,10 +19,10 @@ import org.springframework.stereotype.Service;
 @Service
 public class ShareAccessService {
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
 
-    public ShareAccessService(MyBatisStore store, JsonMaps jsonMaps) {
+    public ShareAccessService(JdbcMaps store, JsonMaps jsonMaps) {
         this.store = store;
         this.jsonMaps = jsonMaps;
     }
@@ -50,5 +52,20 @@ public class ShareAccessService {
         if (Boolean.TRUE.equals(enterprise.get("enabled")) && session.getAttribute("user_id") == null) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "Unauthorized");
         }
+    }
+
+    public KnowledgeAccessScope scope(String kbId, HttpSession session) {
+        authorize(kbId, session);
+        Object sessionUserId = session.getAttribute("user_id");
+        if (!(sessionUserId instanceof Number number)) {
+            return KnowledgeAccessScope.publicAccess();
+        }
+        long authId = number.longValue();
+        List<Integer> groupIds = store.query("""
+                SELECT id FROM auth_groups
+                 WHERE kb_id = ? AND ? = ANY(auth_ids)
+                 ORDER BY id
+                """, (row, rowNumber) -> row.getInt(1), kbId, authId);
+        return new KnowledgeAccessScope(String.valueOf(authId), groupIds);
     }
 }

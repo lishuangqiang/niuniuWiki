@@ -1,6 +1,6 @@
 package com.chaitin.niuniuwiki.agentic;
 
-import com.chaitin.niuniuwiki.agentic.AgenticRagModels.Evidence;
+import com.chaitin.niuniuwiki.retrieval.Evidence;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -19,6 +19,7 @@ final class EvidenceAccumulator {
 
     private final Map<String, Evidence> evidenceByKey = new LinkedHashMap<>();
     private final Map<String, Double> fusionScores = new LinkedHashMap<>();
+    private final Map<String, Double> relevanceScores = new LinkedHashMap<>();
     private final Map<String, Set<String>> nodeQueries = new LinkedHashMap<>();
 
     int addAll(List<Evidence> evidence) {
@@ -51,9 +52,23 @@ final class EvidenceAccumulator {
             String key = item.nodeId().isBlank() ? item.documentId() : item.nodeId();
             grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(item);
         }
-        return grouped.entrySet().stream()
+        List<Map.Entry<String, List<Evidence>>> rankedGroups = grouped.entrySet().stream()
                 .sorted(Comparator.<Map.Entry<String, List<Evidence>>>comparingDouble(
                         entry -> fusionScores.getOrDefault(entry.getKey(), 0d)).reversed())
+                .toList();
+        if (rankedGroups.isEmpty()) {
+            return List.of();
+        }
+        double topScore = fusionScores.getOrDefault(rankedGroups.getFirst().getKey(), 0d);
+        double threshold = Math.max(0.008d, topScore * 0.30d);
+        double topRelevance = rankedGroups.stream()
+                .mapToDouble(entry -> relevanceScores.getOrDefault(entry.getKey(), 0d))
+                .max()
+                .orElse(0d);
+        double relevanceThreshold = Math.max(0d, topRelevance * 0.30d);
+        return rankedGroups.stream()
+                .filter(entry -> fusionScores.getOrDefault(entry.getKey(), 0d) >= threshold)
+                .filter(entry -> relevanceScores.getOrDefault(entry.getKey(), 0d) >= relevanceThreshold)
                 .limit(limit)
                 .map(entry -> reference(entry.getValue()))
                 .toList();
@@ -67,6 +82,7 @@ final class EvidenceAccumulator {
         String nodeKey = item.nodeId().isBlank() ? item.documentId() : item.nodeId();
         double contribution = 1d / (60d + rank + 1d) + Math.max(0d, item.score()) * 0.01d;
         fusionScores.merge(nodeKey, contribution, Double::sum);
+        relevanceScores.merge(nodeKey, Math.max(0d, item.score()), Math::max);
         nodeQueries.computeIfAbsent(nodeKey, ignored -> new LinkedHashSet<>()).add(item.query());
     }
 

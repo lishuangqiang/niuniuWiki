@@ -9,7 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 
 /**
@@ -21,11 +21,11 @@ import org.springframework.stereotype.Service;
 @Service
 public class CommentService {
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final AuthService authService;
 
-    public CommentService(MyBatisStore store, JsonMaps jsonMaps, AuthService authService) {
+    public CommentService(JdbcMaps store, JsonMaps jsonMaps, AuthService authService) {
         this.store = store;
         this.jsonMaps = jsonMaps;
         this.authService = authService;

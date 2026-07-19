@@ -5,14 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import com.chaitin.niuniuwiki.common.JsonMaps;
-import com.chaitin.niuniuwiki.chat.ChatService;
+import com.chaitin.niuniuwiki.model.ModelGateway;
 import com.chaitin.niuniuwiki.compiler.KnowledgeEventLedger;
 import com.chaitin.niuniuwiki.knowledgebase.KnowledgeBaseDtos;
+import com.chaitin.niuniuwiki.integration.IntegrationOutboxService;
 import com.chaitin.niuniuwiki.knowledgebase.KnowledgeBaseService;
 import com.chaitin.niuniuwiki.node.NodeDtos;
 import com.chaitin.niuniuwiki.node.NodeService;
-import com.chaitin.niuniuwiki.persistence.DatabaseMapper;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import com.chaitin.niuniuwiki.rag.RagClient;
 import com.chaitin.niuniuwiki.rag.VectorTaskPublisher;
 import com.chaitin.niuniuwiki.security.AuthContext;
@@ -28,12 +28,6 @@ import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
-import org.apache.ibatis.mapping.Environment;
-import org.apache.ibatis.session.Configuration;
-import org.apache.ibatis.session.SqlSessionFactory;
-import org.apache.ibatis.session.SqlSessionFactoryBuilder;
-import org.mybatis.spring.SqlSessionTemplate;
-import org.mybatis.spring.transaction.SpringManagedTransactionFactory;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -44,7 +38,7 @@ import static org.mockito.Mockito.mock;
 class DatabaseMigrationTest {
 
     @Test
-    void migratesEmptyPostgresSchemaThroughVersion42() throws IOException {
+    void migratesEmptyPostgresSchemaThroughVersion43() throws IOException {
         try (EmbeddedPostgres postgres = EmbeddedPostgres.builder().start()) {
             DataSource dataSource = postgres.getPostgresDatabase();
             Flyway flyway = Flyway.configure()
@@ -56,7 +50,7 @@ class DatabaseMigrationTest {
             JdbcTemplate jdbc = new JdbcTemplate(dataSource);
 
             assertThat(result.success).isTrue();
-            assertThat(result.migrationsExecuted).isEqualTo(42);
+            assertThat(result.migrationsExecuted).isEqualTo(43);
             assertThat(jdbc.queryForObject(
                     "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'",
                     Integer.class)).isGreaterThan(20);
@@ -85,10 +79,24 @@ class DatabaseMigrationTest {
                     "SELECT count(*) FROM information_schema.tables "
                             + "WHERE table_name = 'conversation_reference_snapshots'",
                     Integer.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject(
+                    "SELECT count(*) FROM information_schema.tables WHERE table_name = 'message_citations'",
+                    Integer.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject(
+                    "SELECT count(*) FROM information_schema.tables WHERE table_name = 'integration_outbox'",
+                    Integer.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject(
+                    "SELECT count(*) FROM information_schema.columns "
+                            + "WHERE table_name = 'agentic_rag_runs' AND column_name = 'lease_until'",
+                    Integer.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject(
+                    "SELECT count(*) FROM information_schema.columns "
+                            + "WHERE table_name = 'conversation_messages' AND column_name = 'agent_run_id'",
+                    Integer.class)).isEqualTo(1);
 
             ObjectMapper objectMapper = new ObjectMapper();
             JsonMaps maps = new JsonMaps(objectMapper);
-            MyBatisStore store = createStore(dataSource, maps);
+            JdbcMaps store = createStore(dataSource, maps);
             LegacyDataMigrationRunner legacy = new LegacyDataMigrationRunner(
                     store,
                     maps,
@@ -98,11 +106,22 @@ class DatabaseMigrationTest {
             legacy.run(new DefaultApplicationArguments(new String[0]));
             assertThat(jdbc.queryForObject("SELECT count(*) FROM migrations", Integer.class)).isEqualTo(5);
 
+            IntegrationOutboxService outbox = new IntegrationOutboxService(store, maps);
+            String outboxId = outbox.enqueue("test.subject", Map.of("kind", "migration-test"));
+            assertThat(outbox.claimBatch(10)).singleElement().satisfies(message -> {
+                assertThat(message.get("id")).isEqualTo(outboxId);
+                assertThat(message.get("subject")).isEqualTo("test.subject");
+            });
+            outbox.published(outboxId);
+            assertThat(jdbc.queryForObject(
+                    "SELECT status FROM integration_outbox WHERE id = ?", String.class, outboxId))
+                    .isEqualTo("PUBLISHED");
+
             verifyCoreKnowledgeBaseFlow(jdbc, store, maps);
         }
     }
 
-    private void verifyCoreKnowledgeBaseFlow(JdbcTemplate jdbc, MyBatisStore store, JsonMaps maps) {
+    private void verifyCoreKnowledgeBaseFlow(JdbcTemplate jdbc, JdbcMaps store, JsonMaps maps) {
         AuthService auth = new AuthService(store, mock(JwtService.class));
         RagClient rag = mock(RagClient.class);
         VectorTaskPublisher tasks = mock(VectorTaskPublisher.class);
@@ -116,7 +135,7 @@ class DatabaseMigrationTest {
                     "SELECT settings ->> 'home_page_setting' FROM apps WHERE kb_id = ? AND type = 1",
                     String.class, kbId)).isEqualTo("custom");
             String navId = jdbc.queryForObject("SELECT id FROM navs WHERE kb_id = ?", String.class, kbId);
-            NodeService nodes = new NodeService(store, maps, auth, tasks, mock(ChatService.class));
+            NodeService nodes = new NodeService(store, maps, auth, tasks, mock(ModelGateway.class));
             String nodeId = nodes.create(new NodeDtos.CreateRequest(
                     kbId, navId, "", 2, "Java 重构", "正文", "📚", "摘要", "md", null));
             String releaseId = knowledgeBases.createRelease(new KnowledgeBaseDtos.ReleaseRequest(
@@ -173,16 +192,7 @@ class DatabaseMigrationTest {
         }
     }
 
-    private MyBatisStore createStore(DataSource dataSource, JsonMaps maps) {
-        Environment environment = new Environment(
-                "embedded-postgres",
-                new SpringManagedTransactionFactory(),
-                dataSource);
-        Configuration configuration = new Configuration(environment);
-        configuration.setCallSettersOnNulls(true);
-        configuration.addMapper(DatabaseMapper.class);
-        SqlSessionFactory sessionFactory = new SqlSessionFactoryBuilder().build(configuration);
-        SqlSessionTemplate sessionTemplate = new SqlSessionTemplate(sessionFactory);
-        return new MyBatisStore(sessionTemplate.getMapper(DatabaseMapper.class), maps);
+    private JdbcMaps createStore(DataSource dataSource, JsonMaps maps) {
+        return new JdbcMaps(new JdbcTemplate(dataSource), maps);
     }
 }

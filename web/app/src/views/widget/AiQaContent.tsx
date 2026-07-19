@@ -11,6 +11,14 @@ import { postShareV1ChatFeedback } from '@/request/ShareChat';
 import { getShareV1ConversationDetail } from '@/request/ShareConversation';
 import { copyText } from '@/utils';
 import SSEClient from '@/utils/fetch';
+import { reconcileCitedReferences } from '@/utils/citations';
+import {
+  AgentRunEvent,
+  appendAgentEvent,
+  handleThinkingContent,
+  thinkingStageForAgentEvent,
+  upsertReference,
+} from '@/utils/chatEngine';
 import { getImagePath } from '@/utils/getImagePath';
 import { message } from '@ctzhian/ui';
 import CloseIcon from '@mui/icons-material/Close';
@@ -71,8 +79,6 @@ import {
   StyledThinkingAccordionSummary,
   StyledUserBubble,
 } from './StyledComponents';
-import { handleThinkingContent } from './utils';
-
 export interface ConversationItem {
   q: string;
   a: string;
@@ -82,6 +88,8 @@ export interface ConversationItem {
   source: 'history' | 'chat';
   chunk_result: ChunkResultItem[];
   thinking_content: string;
+  agent_events?: AgentRunEvent[];
+  agent_mode?: string;
   id: string;
 }
 
@@ -127,6 +135,7 @@ const AiQaContent: React.FC<{
     type: string;
     content: string;
     chunk_result: ChunkResultItem;
+    agent_event?: AgentRunEvent;
   }> | null>(null);
   const { palette } = useTheme();
   const messageIdRef = useRef('');
@@ -399,8 +408,22 @@ const AiQaContent: React.FC<{
     if (sseClientRef.current) {
       sseClientRef.current.subscribe(
         JSON.stringify(reqData),
-        ({ type, content, chunk_result }) => {
-          if (type === 'conversation_id') {
+        ({ type, content, chunk_result, agent_event }) => {
+          if (type === 'agent_event' && agent_event) {
+            setThinking(thinkingStageForAgentEvent(agent_event));
+            setConversation(previous => {
+              const next = [...previous];
+              const latest = next[next.length - 1];
+              if (latest) {
+                latest.agent_events = appendAgentEvent(
+                  latest.agent_events || [],
+                  agent_event,
+                );
+                latest.agent_mode = agent_event.mode || latest.agent_mode;
+              }
+              return next;
+            });
+          } else if (type === 'conversation_id') {
             setConversationId(prev => prev + content);
           } else if (type === 'message_id') {
             messageIdRef.current += content;
@@ -476,10 +499,10 @@ const AiQaContent: React.FC<{
               const lastConversation =
                 newConversation[newConversation.length - 1];
               if (lastConversation) {
-                lastConversation.chunk_result = [
-                  ...lastConversation.chunk_result,
+                lastConversation.chunk_result = upsertReference(
+                  lastConversation.chunk_result,
                   chunk_result,
-                ];
+                );
               }
               return newConversation;
             });
@@ -640,12 +663,11 @@ const AiQaContent: React.FC<{
                 const { thinkingContent, answerContent } =
                   handleThinkingContent(message.content || '');
 
-                current.a = answerContent;
                 current.update_time = message.created_at;
                 current.score = 0;
                 current.message_id = '';
                 current.thinking_content = thinkingContent;
-                current.chunk_result = (
+                const storedReferences = (
                   ((message as any).info?.references || []) as any[]
                 ).map(reference => ({
                   node_id: String(reference.node_id || ''),
@@ -658,6 +680,12 @@ const AiQaContent: React.FC<{
                   name: String(reference.name || '未命名文档'),
                   summary: String(reference.summary || ''),
                 }));
+                const cited = reconcileCitedReferences(
+                  answerContent,
+                  storedReferences,
+                );
+                current.a = cited.answer;
+                current.chunk_result = cited.references;
                 current.source = 'history';
                 current.id = uuidv4();
                 conversation.push(current as ConversationItem);

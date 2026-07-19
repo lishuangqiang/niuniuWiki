@@ -1,12 +1,13 @@
 package com.chaitin.niuniuwiki.agentic;
 
-import com.chaitin.niuniuwiki.agentic.AgenticRagModels.Evidence;
+import com.chaitin.niuniuwiki.retrieval.Evidence;
 import com.chaitin.niuniuwiki.common.ApiException;
 import com.chaitin.niuniuwiki.common.CancellationSignal;
 import com.chaitin.niuniuwiki.common.JsonMaps;
 import com.chaitin.niuniuwiki.compiler.TemporalKnowledgeSearch;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import com.chaitin.niuniuwiki.rag.RagClient;
+import com.chaitin.niuniuwiki.security.KnowledgeAccessScope;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -30,13 +31,13 @@ public class AgenticKnowledgeRetriever {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(AgenticKnowledgeRetriever.class);
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final RagClient ragClient;
     private final TemporalKnowledgeSearch temporalSearch;
 
     public AgenticKnowledgeRetriever(
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             RagClient ragClient,
             TemporalKnowledgeSearch temporalSearch
@@ -51,16 +52,17 @@ public class AgenticKnowledgeRetriever {
             String kbId,
             String query,
             int hop,
+            KnowledgeAccessScope accessScope,
             CancellationSignal cancellationSignal
     ) {
         cancellationSignal.check();
-        List<Evidence> temporal = temporalSearch.search(kbId, query, hop, cancellationSignal);
+        List<Evidence> temporal = temporalSearch.search(kbId, query, hop, accessScope, cancellationSignal);
         try {
             String datasetId = store.queryForObject(
                     "SELECT dataset_id FROM knowledge_bases WHERE id = ?", String.class, kbId);
             List<Map<String, Object>> chunks = ragClient.retrieve(
-                    datasetId, query, List.of(), List.of(), cancellationSignal);
-            List<Evidence> result = fromChunks(kbId, query, hop, chunks);
+                    datasetId, query, accessScope.groupIds(), List.of(), cancellationSignal);
+            List<Evidence> result = fromChunks(kbId, query, hop, chunks, accessScope);
             if (!result.isEmpty() || !temporal.isEmpty()) {
                 List<Evidence> merged = new ArrayList<>(temporal);
                 merged.addAll(result);
@@ -72,7 +74,7 @@ public class AgenticKnowledgeRetriever {
             LOGGER.warn("Agentic RAG vector retrieval failed for knowledge base {}: {}", kbId, exception.getMessage());
         }
         cancellationSignal.check();
-        List<Evidence> fallback = databaseFallback(kbId, query, hop);
+        List<Evidence> fallback = databaseFallback(kbId, query, hop, accessScope);
         if (temporal.isEmpty()) {
             return fallback;
         }
@@ -85,7 +87,8 @@ public class AgenticKnowledgeRetriever {
             String kbId,
             String query,
             int hop,
-            List<Map<String, Object>> chunks
+            List<Map<String, Object>> chunks,
+            KnowledgeAccessScope accessScope
     ) {
         List<String> documentIds = chunks.stream()
                 .map(chunk -> value(chunk.get("document_id")))
@@ -107,9 +110,13 @@ public class AgenticKnowledgeRetriever {
                   LEFT JOIN nodes n ON n.id = nr.node_id
                  WHERE nr.doc_id = ANY(?::text[])
                    AND kr.id = (SELECT id FROM kb_releases WHERE kb_id = ? ORDER BY created_at DESC LIMIT 1)
-                   AND COALESCE(n.permissions->>'answerable', 'open') <> 'closed'
+                   AND (COALESCE(n.permissions->>'answerable', 'open') = 'open'
+                        OR (n.permissions->>'answerable' = 'partial' AND EXISTS (
+                            SELECT 1 FROM node_auth_groups nag
+                             WHERE nag.node_id = nr.node_id AND nag.perm = 'answerable'
+                               AND nag.auth_group_id = ANY(?::int[]))))
                  ORDER BY nr.doc_id, nr.updated_at DESC
-                """, store.rowMapper(), postgresTextArray(documentIds), kbId);
+                """, store.rowMapper(), postgresTextArray(documentIds), kbId, accessScope.postgresGroupArray());
         Map<String, Map<String, Object>> byDocument = new HashMap<>();
         releases.forEach(release -> byDocument.put(value(release.get("doc_id")), release));
         String baseUrl = baseUrl(kbId);
@@ -149,7 +156,12 @@ public class AgenticKnowledgeRetriever {
         return result;
     }
 
-    private List<Evidence> databaseFallback(String kbId, String query, int hop) {
+    private List<Evidence> databaseFallback(
+            String kbId,
+            String query,
+            int hop,
+            KnowledgeAccessScope accessScope
+    ) {
         String normalized = value(query).strip().replaceAll("\\s+", "%");
         String pattern = "%" + normalized + "%";
         List<Map<String, Object>> nodes = store.query("""
@@ -164,10 +176,14 @@ public class AgenticKnowledgeRetriever {
                   LEFT JOIN nodes n ON n.id = nr.node_id
                  WHERE kr.id = (SELECT id FROM kb_releases WHERE kb_id = ? ORDER BY created_at DESC LIMIT 1)
                    AND nr.type = 2 AND (nr.name ILIKE ? OR nr.content ILIKE ?)
-                   AND COALESCE(n.permissions->>'answerable', 'open') <> 'closed'
+                   AND (COALESCE(n.permissions->>'answerable', 'open') = 'open'
+                        OR (n.permissions->>'answerable' = 'partial' AND EXISTS (
+                            SELECT 1 FROM node_auth_groups nag
+                             WHERE nag.node_id = nr.node_id AND nag.perm = 'answerable'
+                               AND nag.auth_group_id = ANY(?::int[]))))
                  ORDER BY CASE WHEN nr.name ILIKE ? THEN 0 ELSE 1 END, nr.updated_at DESC
                  LIMIT 10
-                """, store.rowMapper(), kbId, pattern, pattern, pattern);
+                """, store.rowMapper(), kbId, pattern, pattern, accessScope.postgresGroupArray(), pattern);
         String baseUrl = baseUrl(kbId);
         List<Evidence> result = new ArrayList<>();
         for (int index = 0; index < nodes.size(); index++) {

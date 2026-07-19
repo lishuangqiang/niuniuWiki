@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3010",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
     "api": "cx-swagger-api",
@@ -32,6 +32,7 @@
     "markdown-it-highlightjs": "^4.2.0",
     "mermaid": "^11.9.0",
     "next": "16.0.10",
+    "postcss": "^8.5.6",
     "react-device-detect": "^2.2.3",
     "react-markdown": "^10.1.0",
     "react-photo-view": "^1.2.7",

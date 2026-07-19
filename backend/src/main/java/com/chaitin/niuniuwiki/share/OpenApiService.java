@@ -23,41 +23,34 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
+import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 处理公开访问相关的 HTTP 请求。
+ * 处理公开 OAuth 与机器人集成流程。
  *
  * @author 程序员牛肉
  * @since 2026-04-06
  */
-@RestController
-@RequestMapping("/share/v1/openapi")
-public class OpenApiController {
+@Service
+class OpenApiService {
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
-    private static final Logger LOGGER = LoggerFactory.getLogger(OpenApiController.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(OpenApiService.class);
 
     private final ShareAuthService authService;
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final ObjectMapper objectMapper;
     private final ChatService chatService;
     private final Set<String> processedLarkEvents = ConcurrentHashMap.newKeySet();
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 
-    public OpenApiController(
+    public OpenApiService(
             ShareAuthService authService,
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             ObjectMapper objectMapper,
             ChatService chatService
@@ -69,10 +62,9 @@ public class OpenApiController {
         this.chatService = chatService;
     }
 
-    @GetMapping("/github/callback")
     public ResponseEntity<?> githubCallback(
-            @RequestParam String code,
-            @RequestParam String state,
+            String code,
+            String state,
             HttpSession session
     ) {
         try {
@@ -112,12 +104,12 @@ public class OpenApiController {
             if (exception instanceof ApiException apiException) {
                 throw apiException;
             }
-            throw new ApiException("handle callback failed: " + exception.getMessage());
+            LOGGER.warn("GitHub OAuth callback failed for state {}", state, exception);
+            throw new ApiException("GitHub 登录回调处理失败");
         }
     }
 
-    @PostMapping("/lark/bot/{kb_id}")
-    public Object larkBot(@PathVariable("kb_id") String kbId, @RequestBody Map<String, Object> request) {
+    public Object larkBot(String kbId, Map<String, Object> request) {
         Map<String, Object> settings = larkSettings(kbId);
         if (request.get("challenge") != null) {
             verifyLarkToken(settings, request);
@@ -210,7 +202,7 @@ public class OpenApiController {
                         .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
                         .build(), HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new ApiException("lark message failed: " + response.body());
+            throw new ApiException("Lark 消息发送失败，状态码 " + response.statusCode());
         }
     }
 

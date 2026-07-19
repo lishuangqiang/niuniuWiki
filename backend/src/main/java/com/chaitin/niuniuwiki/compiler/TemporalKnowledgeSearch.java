@@ -1,8 +1,9 @@
 package com.chaitin.niuniuwiki.compiler;
 
-import com.chaitin.niuniuwiki.agentic.AgenticRagModels.Evidence;
+import com.chaitin.niuniuwiki.retrieval.Evidence;
 import com.chaitin.niuniuwiki.common.CancellationSignal;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
+import com.chaitin.niuniuwiki.security.KnowledgeAccessScope;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -20,9 +21,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class TemporalKnowledgeSearch {
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
 
-    public TemporalKnowledgeSearch(MyBatisStore store) {
+    public TemporalKnowledgeSearch(JdbcMaps store) {
         this.store = store;
     }
 
@@ -30,6 +31,7 @@ public class TemporalKnowledgeSearch {
             String kbId,
             String query,
             int hop,
+            KnowledgeAccessScope accessScope,
             CancellationSignal cancellationSignal
     ) {
         cancellationSignal.check();
@@ -55,12 +57,17 @@ public class TemporalKnowledgeSearch {
                   LEFT JOIN node_releases nr ON nr.id = doc.source_release_ids[1]
                   LEFT JOIN nodes n ON n.id = doc.source_node_ids[1]
                  WHERE state.kb_id = ?
-                   AND COALESCE(n.permissions->>'answerable', 'open') <> 'closed'
+                   AND (COALESCE(n.permissions->>'answerable', 'open') = 'open'
+                        OR (n.permissions->>'answerable' = 'partial' AND EXISTS (
+                            SELECT 1 FROM node_auth_groups nag
+                             WHERE nag.node_id = doc.source_node_ids[1] AND nag.perm = 'answerable'
+                               AND nag.auth_group_id = ANY(?::int[]))))
                    AND (doc.search_vector @@ plainto_tsquery('simple', ?)
                         OR doc.title ILIKE ? OR doc.summary ILIKE ? OR doc.content ILIKE ?)
                  ORDER BY rank DESC, artifact.confidence DESC, doc.title
                  LIMIT 6
-                """, store.rowMapper(), keyword, kbId, keyword, pattern, pattern, pattern);
+                """, store.rowMapper(), keyword, kbId, accessScope.postgresGroupArray(),
+                keyword, pattern, pattern, pattern);
         cancellationSignal.check();
         List<Evidence> result = new ArrayList<>();
         for (int index = 0; index < rows.size(); index++) {

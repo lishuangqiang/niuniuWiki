@@ -5,6 +5,7 @@ import com.chaitin.niuniuwiki.agentic.AgenticRagModels.AgentEvent;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.AgentEventSink;
 import com.chaitin.niuniuwiki.agentic.AgenticRagService;
 import com.chaitin.niuniuwiki.common.CancellationSignal;
+import com.chaitin.niuniuwiki.security.KnowledgeAccessScope;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
@@ -16,6 +17,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.Semaphore;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -35,6 +37,7 @@ public class ChatStreamService {
     private final AgentRunRegistry runRegistry;
     private final ObjectMapper objectMapper;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    private final Semaphore concurrentStreams = new Semaphore(64, true);
 
     public ChatStreamService(
             ChatService chatService,
@@ -56,22 +59,28 @@ public class ChatStreamService {
             String nonce,
             String remoteIp,
             List<String> imagePaths,
-            List<ChatService.ChatAttachment> attachments
+            List<ChatService.ChatAttachment> attachments,
+            KnowledgeAccessScope accessScope
     ) {
         String runId = UUID.randomUUID().toString();
         return execute(runId, (signal, sink) -> chatService.ask(kbId, appType, message, conversationId, nonce,
-                remoteIp, imagePaths, attachments, runId, sink, signal));
+                remoteIp, imagePaths, attachments, accessScope, runId, sink, signal));
     }
 
-    public SseEmitter resume(String kbId, String runId, String nonce, String remoteIp) {
-        return execute(runId, (signal, sink) -> chatService.resume(kbId, runId, nonce, remoteIp, sink, signal));
+    public SseEmitter resume(
+            String kbId,
+            String runId,
+            String nonce,
+            String remoteIp,
+            KnowledgeAccessScope accessScope
+    ) {
+        return execute(runId, (signal, sink) -> chatService.resume(
+                kbId, runId, nonce, remoteIp, accessScope, sink, signal));
     }
 
     public boolean cancel(String kbId, String runId) {
         agenticRagService.context(runId, kbId);
-        boolean active = runRegistry.cancel(runId);
-        agenticRagService.cancel(runId, "用户主动停止");
-        return active;
+        return runRegistry.cancel(runId);
     }
 
     private SseEmitter execute(String runId, EventAwareStreamOperation operation) {
@@ -81,7 +90,6 @@ public class ChatStreamService {
         Runnable cancelIfActive = () -> {
             if (!terminal.get()) {
                 runRegistry.cancel(runId);
-                agenticRagService.cancel(runId, "客户端连接已关闭");
             }
         };
         emitter.onCompletion(cancelIfActive);
@@ -92,7 +100,14 @@ public class ChatStreamService {
         emitter.onError(error -> cancelIfActive.run());
 
         executor.submit(() -> {
+            boolean acquired = false;
             try {
+                acquired = concurrentStreams.tryAcquire();
+                if (!acquired) {
+                    throw new com.chaitin.niuniuwiki.common.ApiException(
+                            org.springframework.http.HttpStatus.TOO_MANY_REQUESTS,
+                            "当前问答请求过多，请稍后重试");
+                }
                 send(emitter, "run_id", runId, null);
                 ChatService.ChatResult result = operation.execute(
                         signal, event -> sendAgentEvent(emitter, event));
@@ -118,6 +133,10 @@ public class ChatStreamService {
                 agenticRagService.fail(runId, exception.getMessage());
                 safeSend(emitter, "error", exception.getMessage());
                 emitter.complete();
+            } finally {
+                if (acquired) {
+                    concurrentStreams.release();
+                }
             }
         });
         return emitter;

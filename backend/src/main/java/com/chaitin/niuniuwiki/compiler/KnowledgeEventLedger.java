@@ -1,7 +1,7 @@
 package com.chaitin.niuniuwiki.compiler;
 
 import com.chaitin.niuniuwiki.common.JsonMaps;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -20,10 +20,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class KnowledgeEventLedger {
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
 
-    public KnowledgeEventLedger(MyBatisStore store, JsonMaps jsonMaps) {
+    public KnowledgeEventLedger(JdbcMaps store, JsonMaps jsonMaps) {
         this.store = store;
         this.jsonMaps = jsonMaps;
     }

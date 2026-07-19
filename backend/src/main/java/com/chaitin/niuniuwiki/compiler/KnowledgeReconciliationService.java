@@ -1,7 +1,7 @@
 package com.chaitin.niuniuwiki.compiler;
 
 import com.chaitin.niuniuwiki.common.JsonMaps;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import com.chaitin.niuniuwiki.rag.VectorTaskPublisher;
 import com.chaitin.niuniuwiki.security.AuthService;
 import java.util.ArrayList;
@@ -25,7 +25,7 @@ import org.springframework.web.context.WebApplicationContext;
 @Service
 public class KnowledgeReconciliationService {
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final AuthService authService;
     private final VectorTaskPublisher vectorTasks;
@@ -33,7 +33,7 @@ public class KnowledgeReconciliationService {
     private final ApplicationContext applicationContext;
 
     public KnowledgeReconciliationService(
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             AuthService authService,
             VectorTaskPublisher vectorTasks,

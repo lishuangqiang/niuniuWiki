@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 
 /**
@@ -27,12 +27,12 @@ public class ApiTokenService {
             AuthService.DOC_MANAGE,
             AuthService.DATA_OPERATE);
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final AuthService authService;
     private final SecureRandom secureRandom = new SecureRandom();
 
-    public ApiTokenService(MyBatisStore store, JsonMaps jsonMaps, AuthService authService) {
+    public ApiTokenService(JdbcMaps store, JsonMaps jsonMaps, AuthService authService) {
         this.store = store;
         this.jsonMaps = jsonMaps;
         this.authService = authService;

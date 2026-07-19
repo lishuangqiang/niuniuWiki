@@ -1,5 +1,6 @@
 package com.chaitin.niuniuwiki.agentic;
 
+import com.chaitin.niuniuwiki.security.KnowledgeAccessScope;
 import java.util.List;
 import java.util.Map;
 
@@ -64,22 +65,6 @@ public final class AgenticRagModels {
     ) {
     }
 
-    public record Evidence(
-            String evidenceKey,
-            String nodeId,
-            String documentId,
-            String title,
-            String summary,
-            String content,
-            String url,
-            String emoji,
-            double score,
-            String query,
-            int hop,
-            Map<String, Object> metadata
-    ) {
-    }
-
     public record Reflection(
             boolean sufficient,
             double confidence,
@@ -130,8 +115,12 @@ public final class AgenticRagModels {
             String conversationId,
             String userMessageId,
             String question,
-            List<Map<String, Object>> history
+            List<Map<String, Object>> history,
+            KnowledgeAccessScope accessScope
     ) {
+        public RunRequest {
+            accessScope = accessScope == null ? KnowledgeAccessScope.publicAccess() : accessScope;
+        }
     }
 
     public record RunResult(

@@ -9,7 +9,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -25,11 +25,11 @@ public class MaintenanceJobs {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(MaintenanceJobs.class);
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final RagClient rag;
 
-    public MaintenanceJobs(MyBatisStore store, JsonMaps jsonMaps, RagClient rag) {
+    public MaintenanceJobs(JdbcMaps store, JsonMaps jsonMaps, RagClient rag) {
         this.store = store;
         this.jsonMaps = jsonMaps;
         this.rag = rag;

@@ -1,13 +1,13 @@
 package com.chaitin.niuniuwiki.rag;
 
-import com.chaitin.niuniuwiki.chat.ChatService;
+import com.chaitin.niuniuwiki.model.ModelGateway;
 import com.chaitin.niuniuwiki.compiler.KnowledgeCompilerService;
 import com.chaitin.niuniuwiki.compiler.KnowledgeEventLedger;
 import com.chaitin.niuniuwiki.common.JsonMaps;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Component;
 
 /**
@@ -19,25 +19,25 @@ import org.springframework.stereotype.Component;
 @Component
 public class VectorTaskHandler {
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final RagClient rag;
-    private final ChatService chatService;
+    private final ModelGateway modelGateway;
     private final KnowledgeCompilerService compilerService;
     private final KnowledgeEventLedger eventLedger;
 
     public VectorTaskHandler(
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             RagClient rag,
-            ChatService chatService,
+            ModelGateway modelGateway,
             KnowledgeCompilerService compilerService,
             KnowledgeEventLedger eventLedger
     ) {
         this.store = store;
         this.jsonMaps = jsonMaps;
         this.rag = rag;
-        this.chatService = chatService;
+        this.modelGateway = modelGateway;
         this.compilerService = compilerService;
         this.eventLedger = eventLedger;
     }
@@ -111,7 +111,7 @@ public class VectorTaskHandler {
         if (number(node.get("type")) == 1) {
             return;
         }
-        String summary = chatService.rawComplete(
+        String summary = modelGateway.completeText(
                 "你是文档摘要助手。请用不超过180个中文字符准确概括文档，只输出摘要。",
                 "标题：" + value(node.get("name")) + "\n\n正文：" + value(node.get("content")));
         Map<String, Object> meta = jsonMaps.jsonMap(node.get("meta"));

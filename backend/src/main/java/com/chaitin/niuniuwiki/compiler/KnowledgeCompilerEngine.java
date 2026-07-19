@@ -1,9 +1,9 @@
 package com.chaitin.niuniuwiki.compiler;
 
-import com.chaitin.niuniuwiki.chat.ChatService;
+import com.chaitin.niuniuwiki.model.ModelGateway;
 import com.chaitin.niuniuwiki.common.ApiException;
 import com.chaitin.niuniuwiki.common.JsonMaps;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import com.chaitin.niuniuwiki.rag.VectorTaskPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -47,25 +47,25 @@ public class KnowledgeCompilerEngine {
             无法确定的字段使用空数组，不得臆测。
             """;
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final ObjectMapper objectMapper;
-    private final ChatService chatService;
+    private final ModelGateway modelGateway;
     private final TransactionTemplate transactions;
     private final VectorTaskPublisher taskPublisher;
 
     public KnowledgeCompilerEngine(
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             ObjectMapper objectMapper,
-            ChatService chatService,
+            ModelGateway modelGateway,
             TransactionTemplate transactions,
             VectorTaskPublisher taskPublisher
     ) {
         this.store = store;
         this.jsonMaps = jsonMaps;
         this.objectMapper = objectMapper;
-        this.chatService = chatService;
+        this.modelGateway = modelGateway;
         this.transactions = transactions;
         this.taskPublisher = taskPublisher;
     }
@@ -258,7 +258,7 @@ public class KnowledgeCompilerEngine {
         for (int chunkIndex = 0; chunkIndex < chunks.size(); chunkIndex++) {
             List<KnowledgeCompilerSupport.ArtifactDraft> drafts;
             try {
-                String response = chatService.rawComplete(SYSTEM_PROMPT,
+                String response = modelGateway.completeText(SYSTEM_PROMPT,
                         "来源标题：" + title + "\n来源分片：" + (chunkIndex + 1) + "/" + chunks.size()
                                 + "\n\n原始证据：\n" + chunks.get(chunkIndex));
                 drafts = KnowledgeCompilerSupport.parse(objectMapper, response);

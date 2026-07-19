@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import com.chaitin.niuniuwiki.common.JsonMaps;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import com.chaitin.niuniuwiki.rag.RagClient;
 import com.chaitin.niuniuwiki.security.AuthService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -57,7 +57,7 @@ class ModelServiceTest {
 
         ObjectMapper objectMapper = new ObjectMapper();
         ModelService service = new ModelService(
-                mock(MyBatisStore.class),
+                mock(JdbcMaps.class),
                 new JsonMaps(objectMapper),
                 objectMapper,
                 mock(AuthService.class),
@@ -107,7 +107,7 @@ class ModelServiceTest {
 
         ObjectMapper objectMapper = new ObjectMapper();
         ModelService service = new ModelService(
-                mock(MyBatisStore.class),
+                mock(JdbcMaps.class),
                 new JsonMaps(objectMapper),
                 objectMapper,
                 mock(AuthService.class),

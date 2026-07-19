@@ -6,7 +6,7 @@ import com.chaitin.niuniuwiki.security.AuthService;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,11 +22,11 @@ public class NavService {
     private static final double MAX_POSITION = 1e38;
     private static final double MIN_GAP = 1e-5;
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final AuthService authService;
 
-    public NavService(MyBatisStore store, JsonMaps jsonMaps, AuthService authService) {
+    public NavService(JdbcMaps store, JsonMaps jsonMaps, AuthService authService) {
         this.store = store;
         this.jsonMaps = jsonMaps;
         this.authService = authService;

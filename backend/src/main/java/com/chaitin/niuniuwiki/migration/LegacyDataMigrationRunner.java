@@ -11,7 +11,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -27,13 +27,13 @@ public class LegacyDataMigrationRunner implements ApplicationRunner {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LegacyDataMigrationRunner.class);
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final TransactionTemplate transactions;
     private final VectorTaskPublisher vectorTasks;
 
     public LegacyDataMigrationRunner(
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             TransactionTemplate transactions,
             VectorTaskPublisher vectorTasks

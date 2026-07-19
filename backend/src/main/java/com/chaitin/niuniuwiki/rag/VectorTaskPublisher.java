@@ -3,6 +3,7 @@ package com.chaitin.niuniuwiki.rag;
 import com.chaitin.niuniuwiki.common.ApiException;
 import com.chaitin.niuniuwiki.compiler.KnowledgeEventLedger;
 import com.chaitin.niuniuwiki.config.NiuniuWikiProperties;
+import com.chaitin.niuniuwiki.integration.IntegrationOutboxService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.nats.client.Connection;
 import io.nats.client.JetStream;
@@ -21,8 +22,6 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 提供 NiuniuWiki 后端的RAG 与向量任务基础能力。
@@ -39,17 +38,20 @@ public class VectorTaskPublisher {
     private final NiuniuWikiProperties properties;
     private final ObjectMapper objectMapper;
     private final KnowledgeEventLedger eventLedger;
+    private final IntegrationOutboxService outboxService;
     private volatile Connection connection;
     private volatile JetStream jetStream;
 
     public VectorTaskPublisher(
             NiuniuWikiProperties properties,
             ObjectMapper objectMapper,
-            KnowledgeEventLedger eventLedger
+            KnowledgeEventLedger eventLedger,
+            IntegrationOutboxService outboxService
     ) {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.eventLedger = eventLedger;
+        this.outboxService = outboxService;
     }
 
     public void upsertAfterCommit(String kbId, String releaseId, String nodeId) {
@@ -112,7 +114,7 @@ public class VectorTaskPublisher {
         publishNow(VECTOR_SUBJECT, task);
     }
 
-    private void publishNow(String subject, Map<String, Object> task) {
+    public void publishNow(String subject, Map<String, Object> task) {
         try {
             byte[] payload = objectMapper.writeValueAsString(task).getBytes(StandardCharsets.UTF_8);
             stream().publish(subject, payload);
@@ -127,16 +129,7 @@ public class VectorTaskPublisher {
     }
 
     private void publishAfterCommit(String subject, Map<String, Object> task) {
-        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
-            publishNow(subject, task);
-            return;
-        }
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                publishNow(subject, task);
-            }
-        });
+        outboxService.enqueue(subject, task);
     }
 
     private JetStream stream() throws Exception {
@@ -169,7 +162,10 @@ public class VectorTaskPublisher {
         if (management.getStreamNames().contains("task")) {
             StreamConfiguration existing = management.getStreamInfo("task").getConfiguration();
             Set<String> subjects = new LinkedHashSet<>(existing.getSubjects());
-            if (subjects.add(KNOWLEDGE_COMPILE_SUBJECT)) {
+            boolean changed = subjects.add("apps.niuniu-wiki.summary.task");
+            changed = subjects.add(VECTOR_SUBJECT) || changed;
+            changed = subjects.add(KNOWLEDGE_COMPILE_SUBJECT) || changed;
+            if (changed) {
                 management.updateStream(StreamConfiguration.builder(existing).subjects(subjects).build());
             }
             return;

@@ -1,6 +1,6 @@
 package com.chaitin.niuniuwiki.compiler;
 
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
@@ -19,9 +19,9 @@ public class CompiledKnowledgeContext {
 
     private static final int MAX_CHARACTERS = 18_000;
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
 
-    public CompiledKnowledgeContext(MyBatisStore store) {
+    public CompiledKnowledgeContext(JdbcMaps store) {
         this.store = store;
     }
 

@@ -58,8 +58,7 @@ public class AgenticRagController {
         String runId = String.valueOf(request.getOrDefault("run_id", ""));
         authService.requireKbPermission(kbId, AuthService.DATA_OPERATE);
         service.context(runId, kbId);
-        boolean active = registry.cancel(runId);
-        service.cancel(runId, "管理员终止运行");
-        return ApiResponse.ok(Map.of("run_id", runId, "cancelled", active));
+        boolean requested = registry.cancel(runId);
+        return ApiResponse.ok(Map.of("run_id", runId, "cancelled", requested));
     }
 }

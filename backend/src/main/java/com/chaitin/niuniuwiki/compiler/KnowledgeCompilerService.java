@@ -3,7 +3,7 @@ package com.chaitin.niuniuwiki.compiler;
 import com.chaitin.niuniuwiki.common.ApiException;
 import com.chaitin.niuniuwiki.common.JsonMaps;
 import com.chaitin.niuniuwiki.common.PageResult;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import com.chaitin.niuniuwiki.rag.VectorTaskPublisher;
 import com.chaitin.niuniuwiki.security.AuthContext;
 import com.chaitin.niuniuwiki.security.AuthService;
@@ -24,13 +24,13 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class KnowledgeCompilerService {
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final AuthService authService;
     private final VectorTaskPublisher taskPublisher;
 
     public KnowledgeCompilerService(
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             AuthService authService,
             VectorTaskPublisher taskPublisher

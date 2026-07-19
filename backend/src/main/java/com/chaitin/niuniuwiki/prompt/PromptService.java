@@ -5,7 +5,7 @@ import com.chaitin.niuniuwiki.security.AuthService;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 
 /**
@@ -22,11 +22,11 @@ public class PromptService {
     public static final String DEFAULT_SUMMARY_PROMPT =
             "你是文档摘要助手。请用不超过180个中文字符准确概括文档，只输出摘要。";
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final AuthService authService;
 
-    public PromptService(MyBatisStore store, JsonMaps jsonMaps, AuthService authService) {
+    public PromptService(JdbcMaps store, JsonMaps jsonMaps, AuthService authService) {
         this.store = store;
         this.jsonMaps = jsonMaps;
         this.authService = authService;

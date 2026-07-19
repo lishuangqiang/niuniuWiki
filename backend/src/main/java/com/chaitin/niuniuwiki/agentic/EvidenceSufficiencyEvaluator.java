@@ -1,10 +1,10 @@
 package com.chaitin.niuniuwiki.agentic;
 
-import com.chaitin.niuniuwiki.agentic.AgenticRagModels.Evidence;
+import com.chaitin.niuniuwiki.retrieval.Evidence;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.Reflection;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.RetrievalMode;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.TokenUsage;
-import com.chaitin.niuniuwiki.chat.ChatModelClient;
+import com.chaitin.niuniuwiki.model.ModelGateway;
 import com.chaitin.niuniuwiki.common.CancellationSignal;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -25,10 +25,10 @@ public class EvidenceSufficiencyEvaluator {
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() { };
 
-    private final ChatModelClient modelClient;
+    private final ModelGateway modelClient;
     private final ObjectMapper objectMapper;
 
-    public EvidenceSufficiencyEvaluator(ChatModelClient modelClient, ObjectMapper objectMapper) {
+    public EvidenceSufficiencyEvaluator(ModelGateway modelClient, ObjectMapper objectMapper) {
         this.modelClient = modelClient;
         this.objectMapper = objectMapper;
     }
@@ -55,7 +55,7 @@ public class EvidenceSufficiencyEvaluator {
             return fallback(question, mode, evidence, iteration);
         }
         try {
-            ChatModelClient.Completion completion = modelClient.complete(
+            ModelGateway.Completion completion = modelClient.complete(
                     evaluatorPrompt(), evidenceInput(question, mode, evidence, iteration), cancellationSignal,
                     Math.min(700, Math.max(256, remainingTokens / 5)), Duration.ofSeconds(20));
             Map<String, Object> root = objectMapper.readValue(extractJson(completion.content()), MAP_TYPE);

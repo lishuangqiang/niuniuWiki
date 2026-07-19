@@ -1,15 +1,12 @@
 package com.chaitin.niuniuwiki.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import com.chaitin.niuniuwiki.common.CancellationSignal;
 import com.chaitin.niuniuwiki.common.JsonMaps;
-import com.chaitin.niuniuwiki.persistence.DatabaseMapper;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
+import com.chaitin.niuniuwiki.model.ModelGateway;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
@@ -22,6 +19,8 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 
 /**
  * 验证推理客户端能够探测并缓存 OpenAI 兼容网关的输出 Token 参数能力。
@@ -58,9 +57,9 @@ class ChatModelClientTest {
 
         ChatModelClient client = client(Map.of("max_tokens", 8192));
 
-        ChatModelClient.Completion first = client.complete(
+        ModelGateway.Completion first = client.complete(
                 "Reply OK", "test", CancellationSignal.none(), 64, Duration.ofSeconds(5));
-        ChatModelClient.Completion second = client.complete(
+        ModelGateway.Completion second = client.complete(
                 "Reply OK", "test again", CancellationSignal.none(), 64, Duration.ofSeconds(5));
 
         assertThat(first.content()).isEqualTo("OK");
@@ -88,7 +87,7 @@ class ChatModelClientTest {
                 "output_token_parameter", "max_completion_tokens",
                 "max_completion_tokens", 48));
 
-        ChatModelClient.Completion completion = client.complete(
+        ModelGateway.Completion completion = client.complete(
                 "Reply OK", "test", CancellationSignal.none(), 100, Duration.ofSeconds(5));
 
         assertThat(completion.content()).isEqualTo("configured");
@@ -98,26 +97,28 @@ class ChatModelClientTest {
     }
 
     private ChatModelClient client(Map<String, Object> parameters) {
-        DatabaseMapper mapper = mock(DatabaseMapper.class);
-        when(mapper.select(anyString(), anyList())).thenAnswer(invocation -> {
-            String statement = invocation.getArgument(0);
-            if (statement.contains("system_settings")) {
-                return List.of(Map.of("value", Map.of("mode", "manual")));
-            }
-            if (statement.contains("FROM models")) {
-                return List.of(Map.of(
-                        "provider", "Test",
-                        "id", "test-model-id",
-                        "model", "test-model",
-                        "base_url", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1",
-                        "api_key", "test-key",
-                        "api_header", "",
-                        "parameters", parameters));
-            }
-            return List.of();
-        });
         JsonMaps jsonMaps = new JsonMaps(objectMapper);
-        return new ChatModelClient(new MyBatisStore(mapper, jsonMaps), jsonMaps, objectMapper);
+        JdbcMaps store = new JdbcMaps(mock(JdbcTemplate.class), jsonMaps) {
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> List<T> query(String statement, RowMapper<T> rowMapper, Object... arguments) {
+                if (statement.contains("system_settings")) {
+                    return (List<T>) List.of(Map.of("value", Map.of("mode", "manual")));
+                }
+                if (statement.contains("FROM models")) {
+                    return (List<T>) List.of(Map.of(
+                            "provider", "Test",
+                            "id", "test-model-id",
+                            "model", "test-model",
+                            "base_url", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1",
+                            "api_key", "test-key",
+                            "api_header", "",
+                            "parameters", parameters));
+                }
+                return List.of();
+            }
+        };
+        return new ChatModelClient(store, jsonMaps, objectMapper);
     }
 
     private static String readBody(HttpExchange exchange) throws java.io.IOException {

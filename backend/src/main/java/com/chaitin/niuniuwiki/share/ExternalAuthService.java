@@ -29,7 +29,7 @@ import javax.naming.directory.DirContext;
 import javax.naming.directory.InitialDirContext;
 import javax.naming.directory.SearchControls;
 import javax.naming.directory.SearchResult;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 
 /**
@@ -45,7 +45,7 @@ public class ExternalAuthService {
     private static final Pattern CAS_USER = Pattern.compile(
             "<(?:\\w+:)?user>([^<]+)</(?:\\w+:)?user>", Pattern.CASE_INSENSITIVE);
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final ObjectMapper objectMapper;
     private final ShareAccessService accessService;
@@ -56,7 +56,7 @@ public class ExternalAuthService {
             .build();
 
     public ExternalAuthService(
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             ObjectMapper objectMapper,
             ShareAccessService accessService

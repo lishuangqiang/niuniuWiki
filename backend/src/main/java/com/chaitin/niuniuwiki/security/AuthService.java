@@ -4,7 +4,7 @@ import com.chaitin.niuniuwiki.common.ApiException;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 
 /**
@@ -20,10 +20,10 @@ public class AuthService {
     public static final String DOC_MANAGE = "doc_manage";
     public static final String DATA_OPERATE = "data_operate";
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JwtService jwtService;
 
-    public AuthService(MyBatisStore store, JwtService jwtService) {
+    public AuthService(JdbcMaps store, JwtService jwtService) {
         this.store = store;
         this.jwtService = jwtService;
     }

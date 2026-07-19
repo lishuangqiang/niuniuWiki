@@ -15,6 +15,14 @@ import {
   readConversationHistory,
   rememberConversation,
 } from '@/utils/conversationHistory';
+import { reconcileCitedReferences } from '@/utils/citations';
+import {
+  AgentRunEvent,
+  appendAgentEvent,
+  handleThinkingContent,
+  thinkingStageForAgentEvent,
+  upsertReference,
+} from '@/utils/chatEngine';
 import SSEClient, { SSEHttpError } from '@/utils/fetch';
 import { Image as ImagePreview, message } from '@ctzhian/ui';
 import CloseIcon from '@mui/icons-material/Close';
@@ -71,8 +79,6 @@ import {
   StyledThinkingAccordionSummary,
   StyledUserBubble,
 } from './StyledComponents';
-import { handleThinkingContent } from './utils';
-
 import { getImagePath } from '@/utils/getImagePath';
 
 export interface ConversationItem {
@@ -95,17 +101,6 @@ export interface ConversationItem {
     size: number;
     type: string;
   }>;
-}
-
-interface AgentRunEvent {
-  run_id: string;
-  stage: string;
-  status: string;
-  message: string;
-  iteration: number;
-  mode: string;
-  queries: string[];
-  metrics: Record<string, string | number | boolean>;
 }
 
 interface TextAttachment {
@@ -741,27 +736,13 @@ const AiQaContent: React.FC<{
             activeRunIdRef.current = content;
           } else if (type === 'agent_event' && agent_event) {
             setAgentStatus(agent_event.message || content);
-            if (agent_event.stage === 'reflect') {
-              setThinking(2);
-            } else if (agent_event.stage === 'generate') {
-              setThinking(3);
-            } else {
-              setThinking(1);
-            }
+            setThinking(thinkingStageForAgentEvent(agent_event));
             setConversation(previous => {
               const next = [...previous];
               const latest = next[next.length - 1];
               if (latest) {
                 const events = latest.agent_events || [];
-                const duplicate = events.some(
-                  event =>
-                    event.stage === agent_event.stage &&
-                    event.status === agent_event.status &&
-                    event.message === agent_event.message,
-                );
-                latest.agent_events = duplicate
-                  ? events
-                  : [...events, agent_event].slice(-16);
+                latest.agent_events = appendAgentEvent(events, agent_event);
                 if (agent_event.mode) latest.agent_mode = agent_event.mode;
               }
               return next;
@@ -874,12 +855,10 @@ const AiQaContent: React.FC<{
               return newFullAnswer;
             });
           } else if (type === 'chunk_result') {
-            const nextReferences = [
-              ...latestReferencesRef.current.filter(
-                reference => reference.node_id !== chunk_result.node_id,
-              ),
+            const nextReferences = upsertReference(
+              latestReferencesRef.current,
               chunk_result,
-            ];
+            );
             latestReferencesRef.current = nextReferences;
             onReferencesChange(nextReferences);
             setConversation(preConversation => {
@@ -1105,25 +1084,24 @@ const AiQaContent: React.FC<{
             const { thinkingContent, answerContent } = handleThinkingContent(
               item.content || '',
             );
-            current.a = answerContent;
             current.update_time = item.created_at || '';
             current.score = 0;
             current.message_id = '';
             current.thinking_content = thinkingContent;
-            current.agent_events = (((item as any).info?.agent_trace || []) as any[]).map(
-              event => ({
-                run_id: String((item as any).info?.agent_run_id || ''),
-                stage: String(event.stage || ''),
-                status: String(event.status || ''),
-                message: String(event.message || ''),
-                iteration: Number(event.iteration || 0),
-                mode: String((item as any).info?.agent_mode || ''),
-                queries: [],
-                metrics: event.metrics || {},
-              }),
-            );
+            current.agent_events = (
+              ((item as any).info?.agent_trace || []) as any[]
+            ).map(event => ({
+              run_id: String((item as any).info?.agent_run_id || ''),
+              stage: String(event.stage || ''),
+              status: String(event.status || ''),
+              message: String(event.message || ''),
+              iteration: Number(event.iteration || 0),
+              mode: String((item as any).info?.agent_mode || ''),
+              queries: [],
+              metrics: event.metrics || {},
+            }));
             current.agent_mode = String((item as any).info?.agent_mode || '');
-            current.chunk_result = (
+            const storedReferences = (
               ((item as any).info?.references || []) as any[]
             ).map(reference => ({
               node_id: String(reference.node_id || ''),
@@ -1138,6 +1116,12 @@ const AiQaContent: React.FC<{
               url: String(reference.url || ''),
               emoji: String(reference.emoji || ''),
             }));
+            const cited = reconcileCitedReferences(
+              answerContent,
+              storedReferences,
+            );
+            current.a = cited.answer;
+            current.chunk_result = cited.references;
             current.source = 'history';
             current.id = uuidv4();
             current.result_expend = false;
@@ -1159,9 +1143,9 @@ const AiQaContent: React.FC<{
             message_id: '',
             source: 'history',
             chunk_result: [],
-              thinking_content: '',
-              agent_events: [],
-              agent_mode: '',
+            thinking_content: '',
+            agent_events: [],
+            agent_mode: '',
             id: uuidv4(),
             result_expend: true,
             thinking_expend: true,
@@ -1186,7 +1170,12 @@ const AiQaContent: React.FC<{
         latestConversation.chunk_result.length === 0 &&
         fallbackReferences.length > 0
       ) {
-        latestConversation.chunk_result = fallbackReferences;
+        const cited = reconcileCitedReferences(
+          latestConversation.a,
+          fallbackReferences,
+        );
+        latestConversation.a = cited.answer;
+        latestConversation.chunk_result = cited.references;
       }
       const latestReferences = latestConversation?.chunk_result || [];
       latestReferencesRef.current = latestReferences;

@@ -14,7 +14,7 @@ public class ApiException extends RuntimeException {
     private final int code;
 
     public ApiException(String message) {
-        this(HttpStatus.OK, message, 0);
+        this(HttpStatus.BAD_REQUEST, message, 0);
     }
 
     public ApiException(HttpStatus status, String message) {

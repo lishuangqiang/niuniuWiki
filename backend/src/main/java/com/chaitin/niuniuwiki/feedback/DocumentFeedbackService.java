@@ -9,7 +9,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -22,13 +22,13 @@ import org.springframework.web.multipart.MultipartFile;
 @Service
 public class DocumentFeedbackService {
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final AuthService authService;
     private final FileService fileService;
 
     public DocumentFeedbackService(
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             AuthService authService,
             FileService fileService

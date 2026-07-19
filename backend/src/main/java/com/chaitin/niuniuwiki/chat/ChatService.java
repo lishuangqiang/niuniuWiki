@@ -4,6 +4,7 @@ import com.chaitin.niuniuwiki.agentic.AgenticRagModels;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.AgentEventSink;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.RunRequest;
 import com.chaitin.niuniuwiki.agentic.AgenticRagModels.RunResult;
+import com.chaitin.niuniuwiki.agentic.AgenticRagModels.UsageSnapshot;
 import com.chaitin.niuniuwiki.agentic.AgenticRagService;
 import com.chaitin.niuniuwiki.block.BlockWordService;
 import com.chaitin.niuniuwiki.compiler.CompiledKnowledgeContext;
@@ -12,6 +13,9 @@ import com.chaitin.niuniuwiki.common.CancellationSignal;
 import com.chaitin.niuniuwiki.common.JsonMaps;
 import com.chaitin.niuniuwiki.prompt.PromptService;
 import com.chaitin.niuniuwiki.rag.RagClient;
+import com.chaitin.niuniuwiki.security.KnowledgeAccessScope;
+import com.chaitin.niuniuwiki.model.ModelGateway;
+import com.chaitin.niuniuwiki.model.ModelGateway.Completion;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -19,7 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,24 +39,28 @@ public class ChatService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ChatService.class);
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final RagClient ragClient;
     private final PromptService promptService;
     private final BlockWordService blockWordService;
     private final CompiledKnowledgeContext compiledKnowledgeContext;
     private final AgenticRagService agenticRagService;
-    private final ChatModelClient modelClient;
+    private final ModelGateway modelClient;
+    private final ChatPersistenceService persistenceService;
+    private final AnswerContextAssembler contextAssembler;
 
     public ChatService(
-            MyBatisStore store,
+            JdbcMaps store,
             JsonMaps jsonMaps,
             RagClient ragClient,
             PromptService promptService,
             BlockWordService blockWordService,
             CompiledKnowledgeContext compiledKnowledgeContext,
             AgenticRagService agenticRagService,
-            ChatModelClient modelClient
+            ModelGateway modelClient,
+            ChatPersistenceService persistenceService,
+            AnswerContextAssembler contextAssembler
     ) {
         this.store = store;
         this.jsonMaps = jsonMaps;
@@ -62,6 +70,8 @@ public class ChatService {
         this.compiledKnowledgeContext = compiledKnowledgeContext;
         this.agenticRagService = agenticRagService;
         this.modelClient = modelClient;
+        this.persistenceService = persistenceService;
+        this.contextAssembler = contextAssembler;
     }
 
     public ChatResult ask(
@@ -75,7 +85,7 @@ public class ChatService {
             List<ChatAttachment> attachments
     ) {
         return ask(kbId, appType, message, conversationId, nonce, remoteIp, imagePaths, attachments,
-                UUID.randomUUID().toString(), AgentEventSink.noop(), CancellationSignal.none());
+                KnowledgeAccessScope.publicAccess());
     }
 
     public ChatResult ask(
@@ -87,6 +97,22 @@ public class ChatService {
             String remoteIp,
             List<String> imagePaths,
             List<ChatAttachment> attachments,
+            KnowledgeAccessScope accessScope
+    ) {
+        return ask(kbId, appType, message, conversationId, nonce, remoteIp, imagePaths, attachments,
+                accessScope, UUID.randomUUID().toString(), AgentEventSink.noop(), CancellationSignal.none());
+    }
+
+    public ChatResult ask(
+            String kbId,
+            int appType,
+            String message,
+            String conversationId,
+            String nonce,
+            String remoteIp,
+            List<String> imagePaths,
+            List<ChatAttachment> attachments,
+            KnowledgeAccessScope accessScope,
             String runId,
             AgentEventSink eventSink,
             CancellationSignal cancellationSignal
@@ -94,46 +120,16 @@ public class ChatService {
         blockWordService.validate(kbId, message);
         List<String> safeImagePaths = sanitizeImagePaths(imagePaths);
         List<ChatAttachment> safeAttachments = sanitizeAttachments(attachments);
-        Map<String, Object> app = app(kbId, appType);
-        boolean newConversation = conversationId == null || conversationId.isBlank();
-        String id = newConversation ? UUID.randomUUID().toString() : conversationId;
-        String conversationNonce = newConversation ? UUID.randomUUID().toString() : value(nonce);
-        if (newConversation) {
-            store.update(
-                    "INSERT INTO conversations(id, nonce, kb_id, app_id, subject, remote_ip, info, created_at) "
-                            + "VALUES (?, ?, ?, ?, ?, ?, '{}'::jsonb, now())",
-                    id, conversationNonce, kbId, app.get("id"), message, value(remoteIp));
-        } else {
-            Integer valid = store.queryForObject(
-                    "SELECT count(*) FROM conversations WHERE id = ? AND kb_id = ? AND nonce = ?",
-                    Integer.class, id, kbId, nonce);
-            if (valid == null || valid == 0) {
-                throw new ApiException("invalid conversation nonce");
-            }
-        }
-
-        String userMessageId = UUID.randomUUID().toString();
-        Map<String, Object> userInfo = safeAttachments.isEmpty()
-                ? Map.of()
-                : Map.of("attachments", safeAttachments.stream()
-                        .map(attachment -> Map.of(
-                                "name", attachment.name(),
-                                "size", attachment.size(),
-                                "type", attachment.type()))
-                        .toList());
-        store.update(
-                "INSERT INTO conversation_messages(id, conversation_id, app_id, kb_id, role, content, remote_ip, "
-                        + "info, image_paths, created_at) VALUES (?, ?, ?, ?, 'user', ?, ?, ?::jsonb, ?::text[], now())",
-                userMessageId, id, app.get("id"), kbId, message, value(remoteIp),
-                jsonMaps.json(userInfo), postgresTextArray(safeImagePaths));
-        List<Map<String, Object>> history = store.query(
-                "SELECT role, content FROM conversation_messages WHERE conversation_id = ? AND id <> ? "
-                        + "ORDER BY created_at",
-                store.rowMapper(), id, userMessageId);
+        ChatPersistenceService.OpenTurn turn = persistenceService.openTurn(
+                kbId, appType, message, conversationId, nonce, remoteIp,
+                safeImagePaths, safeAttachments, runId, accessScope);
         try {
             RunResult agentResult = agenticRagService.execute(
-                    new RunRequest(runId, kbId, id, userMessageId, message, history), eventSink, cancellationSignal);
-            return persistAnswer(kbId, id, conversationNonce, app, userMessageId, message, value(remoteIp),
+                    new RunRequest(runId, kbId, turn.conversationId(), turn.userMessageId(), message,
+                            turn.history(), accessScope),
+                    eventSink, cancellationSignal);
+            return persistAnswer(kbId, turn.conversationId(), turn.nonce(), turn.appId(),
+                    turn.userMessageId(), message, value(remoteIp),
                     safeAttachments, agentResult, eventSink, cancellationSignal);
         } catch (CancellationException exception) {
             agenticRagService.cancel(runId, exception.getMessage());
@@ -149,6 +145,7 @@ public class ChatService {
             String runId,
             String nonce,
             String remoteIp,
+            KnowledgeAccessScope accessScope,
             AgentEventSink eventSink,
             CancellationSignal cancellationSignal
     ) {
@@ -159,9 +156,9 @@ public class ChatService {
         if (!value(conversation.get("nonce")).equals(value(nonce))) {
             throw new ApiException("invalid conversation nonce");
         }
-        Map<String, Object> app = Map.of("id", conversation.get("app_id"));
-        RunResult agentResult = agenticRagService.resume(runId, kbId, eventSink, cancellationSignal);
-        return persistAnswer(kbId, context.conversationId(), value(conversation.get("nonce")), app,
+        RunResult agentResult = agenticRagService.resume(runId, kbId, accessScope, eventSink, cancellationSignal);
+        return persistAnswer(kbId, context.conversationId(), value(conversation.get("nonce")),
+                value(conversation.get("app_id")),
                 context.userMessageId(), context.question(), value(remoteIp), List.of(), agentResult,
                 eventSink, cancellationSignal);
     }
@@ -170,7 +167,7 @@ public class ChatService {
             String kbId,
             String conversationId,
             String conversationNonce,
-            Map<String, Object> app,
+            String appId,
             String userMessageId,
             String question,
             String remoteIp,
@@ -180,21 +177,30 @@ public class ChatService {
             CancellationSignal cancellationSignal
     ) {
         cancellationSignal.check();
-        List<Map<String, Object>> references = agentResult.references();
-        ChatModelClient.Completion completion;
+        List<Map<String, Object>> candidateReferences = agentResult.references();
+        Completion completion;
         if (agentResult.needsClarification()) {
-            completion = new ChatModelClient.Completion(agentResult.directAnswer(), 0, 0, "agentic", "clarifier");
+            completion = new Completion(agentResult.directAnswer(), 0, 0, "agentic", "clarifier");
         } else if (agentResult.remainingTokens() < 512) {
             eventSink.emit(AgenticRagModels.AgentEvent.of(agentResult.runId(), "generate", "DEGRADED",
                     "本次 Agent 已达到 Token 预算，已切换为可验证的证据摘要回答",
                     agentResult.usage().iterations(), agentResult.plan().mode(), List.of(),
                     Map.of("context_mode", "EXTRACTIVE", "remaining_tokens", agentResult.remainingTokens())));
-            completion = extractiveFallback(question, references, agentResult);
+            completion = extractiveFallback(question, candidateReferences, agentResult);
         } else {
-            completion = completeWithRecovery(kbId, conversationId, question, references, attachments,
+            completion = completeWithRecovery(kbId, conversationId, question, candidateReferences, attachments,
                     cancellationSignal, agentResult, eventSink);
         }
-        String answer = completion.content();
+        CitationReconciler.Result citationResult = CitationReconciler.reconcile(
+                completion.content(), candidateReferences);
+        List<Map<String, Object>> references = citationResult.references();
+        String answer = citationResult.answer();
+        if (!references.isEmpty()
+                && Boolean.TRUE.equals(promptService.getInternal(kbId).get("enable_preset_reference"))) {
+            answer = CitationReconciler.appendReferenceBlock(answer, references);
+        }
+        completion = new Completion(answer, completion.promptTokens(), completion.completionTokens(),
+                completion.provider(), completion.model());
         String assistantMessageId = UUID.randomUUID().toString();
         List<Map<String, Object>> storedReferences = references.stream()
                 .map(this::storedReference)
@@ -206,24 +212,13 @@ public class ChatService {
         info.put("agent_plan", agentResult.plan());
         info.put("agent_usage", agentResult.usage());
         info.put("agent_trace", agenticRagService.trace(agentResult.runId()));
-        store.update(
-                "INSERT INTO conversation_messages(id, conversation_id, app_id, kb_id, role, content, provider, model, "
-                        + "remote_ip, info, parent_id, created_at) "
-                        + "VALUES (?, ?, ?, ?, 'assistant', ?, ?, ?, ?, ?::jsonb, ?, now())",
-                assistantMessageId, conversationId, app.get("id"), kbId, answer,
-                completion.provider(), completion.model(), remoteIp, jsonMaps.json(info), userMessageId);
-        for (Map<String, Object> reference : references) {
-            store.update(
-                    "INSERT INTO conversation_references(conversation_id, app_id, node_id, name, url, favicon, "
-                            + "node_release_id, knowledge_version_id, recorded_at) "
-                            + "SELECT ?, ?, ?, ?, ?, '', NULLIF(?, ''), NULLIF(?, ''), now() WHERE NOT EXISTS ("
-                            + "SELECT 1 FROM conversation_references WHERE conversation_id = ? AND node_id = ?)",
-                    conversationId, app.get("id"), reference.get("node_id"), reference.get("name"),
-                    reference.get("url"), value(reference.get("node_release_id")),
-                    value(reference.get("knowledge_version_id")), conversationId, reference.get("node_id"));
-            captureReferenceSnapshot(kbId, conversationId, assistantMessageId, reference);
-        }
-        agenticRagService.complete(agentResult.runId(), assistantMessageId, agentResult.usage(), completion.totalTokens());
+        UsageSnapshot completedUsage = new UsageSnapshot(
+                agentResult.usage().retrievals(), agentResult.usage().iterations(),
+                agentResult.usage().tokens() + Math.max(0, completion.totalTokens()),
+                agentResult.usage().elapsedMs(), agentResult.usage().evidenceCount(),
+                agentResult.usage().stopReason());
+        persistenceService.saveAnswer(kbId, conversationId, appId, userMessageId, assistantMessageId,
+                remoteIp, answer, completion, info, references, agentResult.runId(), completedUsage);
         eventSink.emit(AgenticRagModels.AgentEvent.of(agentResult.runId(), "complete", "COMPLETED",
                 "回答生成完成", agentResult.usage().iterations(), agentResult.plan().mode(), List.of(),
                 Map.of("references", references.size(), "answer_tokens", completion.completionTokens())));
@@ -231,7 +226,7 @@ public class ChatService {
                 agentResult.runId(), agentResult.plan().mode().name(), agentResult.usage());
     }
 
-    private ChatModelClient.Completion completeWithRecovery(
+    private Completion completeWithRecovery(
             String kbId,
             String conversationId,
             String question,
@@ -277,7 +272,7 @@ public class ChatService {
         }
     }
 
-    private ChatModelClient.Completion degradedCompletion(
+    private Completion degradedCompletion(
             String question,
             List<Map<String, Object>> references,
             RunResult agentResult,
@@ -333,50 +328,16 @@ public class ChatService {
      * @author 程序员牛肉
      * @since 2026-07-18
      */
-    private void captureReferenceSnapshot(
-            String kbId,
-            String conversationId,
-            String messageId,
-            Map<String, Object> reference
-    ) {
-        String nodeId = value(reference.get("node_id"));
-        String releaseId = value(reference.get("node_release_id"));
-        if (nodeId.isBlank()) {
-            return;
-        }
-        List<Map<String, Object>> releases = releaseId.isBlank() ? List.of() : store.query("""
-                SELECT id, node_id, name, content, meta
-                  FROM node_releases
-                 WHERE id = ? AND kb_id = ? AND node_id = ?
-                UNION ALL
-                SELECT id, node_id, name, content, meta
-                  FROM node_release_backup
-                 WHERE id = ? AND kb_id = ? AND node_id = ?
-                 LIMIT 1
-                """, store.rowMapper(), releaseId, kbId, nodeId, releaseId, kbId, nodeId);
-        Map<String, Object> release = releases.isEmpty() ? Map.of() : releases.getFirst();
-        Map<String, Object> current = store.query(
-                "SELECT permissions FROM nodes WHERE id = ? AND kb_id = ?",
-                store.rowMapper(), nodeId, kbId).stream().findFirst().orElse(Map.of());
-        store.update("""
-                INSERT INTO conversation_reference_snapshots(
-                    id, conversation_id, message_id, kb_id, node_id, node_release_id, knowledge_version_id,
-                    name, content, meta, permissions, recorded_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, now())
-                ON CONFLICT(message_id, node_id) DO NOTHING
-                """, UUID.randomUUID().toString(), conversationId, messageId, kbId, nodeId,
-                releaseId, value(reference.get("knowledge_version_id")),
-                value(release.getOrDefault("name", reference.get("name"))),
-                value(release.get("content")),
-                jsonMaps.json(jsonMaps.jsonMap(release.get("meta"))),
-                jsonMaps.json(jsonMaps.jsonMap(current.get("permissions"))));
+    public List<Map<String, Object>> search(String kbId, String query) {
+        return search(kbId, query, KnowledgeAccessScope.publicAccess());
     }
 
-    public List<Map<String, Object>> search(String kbId, String query) {
+    public List<Map<String, Object>> search(String kbId, String query, KnowledgeAccessScope accessScope) {
         try {
             String datasetId = store.queryForObject(
                     "SELECT dataset_id FROM knowledge_bases WHERE id = ?", String.class, kbId);
-            List<Map<String, Object>> chunks = ragClient.retrieve(datasetId, query, List.of(), List.of());
+            List<Map<String, Object>> chunks = ragClient.retrieve(
+                    datasetId, query, accessScope.groupIds(), List.of());
             Map<String, Map<String, Object>> references = new LinkedHashMap<>();
             String baseUrl = baseUrl(kbId);
             for (Map<String, Object> chunk : chunks) {
@@ -391,9 +352,13 @@ public class ChatService {
                           LEFT JOIN nodes n ON n.id = nr.node_id
                          WHERE nr.doc_id = ? AND kr.id = (
                                SELECT id FROM kb_releases WHERE kb_id = ? ORDER BY created_at DESC LIMIT 1)
-                           AND COALESCE(n.permissions->>'answerable', 'open') <> 'closed'
+                           AND (COALESCE(n.permissions->>'answerable', 'open') = 'open'
+                                OR (n.permissions->>'answerable' = 'partial' AND EXISTS (
+                                    SELECT 1 FROM node_auth_groups nag
+                                     WHERE nag.node_id = nr.node_id AND nag.perm = 'answerable'
+                                       AND nag.auth_group_id = ANY(?::int[]))))
                          LIMIT 1
-                        """, store.rowMapper(), documentId, kbId);
+                        """, store.rowMapper(), documentId, kbId, accessScope.postgresGroupArray());
                 if (releases.isEmpty()) {
                     continue;
                 }
@@ -411,10 +376,14 @@ public class ChatService {
             LOGGER.warn("RAG search failed for knowledge base {}; using PostgreSQL fallback: {}",
                     kbId, exception.getMessage());
         }
-        return databaseSearch(kbId, query);
+        return databaseSearch(kbId, query, accessScope);
     }
 
-    private List<Map<String, Object>> databaseSearch(String kbId, String query) {
+    private List<Map<String, Object>> databaseSearch(
+            String kbId,
+            String query,
+            KnowledgeAccessScope accessScope
+    ) {
         String pattern = "%" + query.strip().replaceAll("\\s+", "%") + "%";
         List<Map<String, Object>> nodes = store.query("""
                 SELECT nr.node_id, nr.name, nr.meta->>'summary' AS summary,
@@ -426,10 +395,14 @@ public class ChatService {
                   LEFT JOIN nodes n ON n.id = nr.node_id
                  WHERE kr.id = (SELECT id FROM kb_releases WHERE kb_id = ? ORDER BY created_at DESC LIMIT 1)
                    AND nr.type = 2 AND (nr.name ILIKE ? OR nr.content ILIKE ?)
-                   AND COALESCE(n.permissions->>'answerable', 'open') <> 'closed'
+                   AND (COALESCE(n.permissions->>'answerable', 'open') = 'open'
+                        OR (n.permissions->>'answerable' = 'partial' AND EXISTS (
+                            SELECT 1 FROM node_auth_groups nag
+                             WHERE nag.node_id = nr.node_id AND nag.perm = 'answerable'
+                               AND nag.auth_group_id = ANY(?::int[]))))
                  ORDER BY CASE WHEN nr.name ILIKE ? THEN 0 ELSE 1 END, nr.updated_at DESC
                  LIMIT 8
-                """, store.rowMapper(), kbId, pattern, pattern, pattern);
+                """, store.rowMapper(), kbId, pattern, pattern, accessScope.postgresGroupArray(), pattern);
         String baseUrl = baseUrl(kbId);
         nodes.forEach(node -> {
             node.put("name", node.getOrDefault("name", ""));
@@ -439,12 +412,7 @@ public class ChatService {
         return nodes;
     }
 
-    public String rawComplete(String systemPrompt, String userPrompt) {
-        return modelClient.complete(systemPrompt, userPrompt, CancellationSignal.none(),
-                8_000, Duration.ofMinutes(2)).content();
-    }
-
-    private ChatModelClient.Completion complete(
+    private Completion complete(
             String kbId,
             String conversationId,
             String question,
@@ -457,22 +425,21 @@ public class ChatService {
         List<Map<String, Object>> history = store.query(
                 "SELECT role, content FROM conversation_messages WHERE conversation_id = ? ORDER BY created_at",
                 store.rowMapper(), conversationId);
-        StringBuilder documents = new StringBuilder();
+        List<Map<String, Object>> hydratedReferences = new ArrayList<>();
         for (int index = 0; index < references.size(); index++) {
+            Map<String, Object> hydrated = new LinkedHashMap<>(references.get(index));
             String content = contextMode == ContextMode.SUMMARY_ONLY
-                    ? value(references.get(index).get("summary"))
-                    : value(references.get(index).get("content"));
+                    ? value(hydrated.get("summary")) : value(hydrated.get("content"));
             if (content.isBlank() && contextMode != ContextMode.SUMMARY_ONLY) {
-                String nodeId = value(references.get(index).get("node_id"));
+                String nodeId = value(hydrated.get("node_id"));
                 content = store.query(
                         "SELECT nr.content FROM node_releases nr "
                                 + "JOIN kb_release_node_releases links ON links.node_release_id = nr.id "
                                 + "WHERE links.node_id = ? ORDER BY links.created_at DESC LIMIT 1",
                         (rs, rowNum) -> rs.getString(1), nodeId).stream().findFirst().orElse("");
             }
-            documents.append("\n[文档 ").append(index + 1).append("] ")
-                    .append(references.get(index).get("name")).append("\n")
-                    .append(content, 0, Math.min(content.length(), 6000)).append("\n");
+            hydrated.put("content", content);
+            hydratedReferences.add(hydrated);
         }
         Map<String, Object> prompt = promptService.getInternal(kbId);
         String system = value(prompt.get("content"));
@@ -489,50 +456,29 @@ public class ChatService {
                         kbId,
                         references.stream().map(reference -> value(reference.get("node_id"))).toList())
                 : "";
-        if (!compiledKnowledge.isBlank()) {
-            system += "\n以下内容是知识编译器从本次命中的原始文档中提炼出的结构化知识。"
-                    + "它用于帮助组织答案，但原始文档仍是最终证据，引用编号必须指向原始文档：\n"
-                    + compiledKnowledge;
-        }
-        system += "\n回答应准确、简洁，并在引用知识库结论后标注文档编号。\n知识库文档：" + documents;
-        if (!attachments.isEmpty()) {
-            StringBuilder attachmentText = new StringBuilder("\n用户本轮上传的文件：");
-            int remainingCharacters = 30_000;
-            for (int index = 0; index < attachments.size() && remainingCharacters > 0; index++) {
-                ChatAttachment attachment = attachments.get(index);
-                int length = Math.min(attachment.content().length(), remainingCharacters);
-                attachmentText.append("\n[附件 ").append(index + 1).append("] ")
-                        .append(attachment.name()).append("\n")
-                        .append(attachment.content(), 0, length).append("\n");
-                remainingCharacters -= length;
-            }
-            system += attachmentText;
-        }
+        AnswerContextAssembler.AssembledContext assembled = contextAssembler.assemble(
+                hydratedReferences, compiledKnowledge, attachments, contextMode == ContextMode.SUMMARY_ONLY);
+        system += "\n回答应准确、简洁，并在引用知识库结论后标注文档编号。"
+                + "只标注实际支撑当前结论的文档，不要引用或罗列未使用的候选文档。\n"
+                + assembled.securityPolicy();
         List<Map<String, Object>> messages = new ArrayList<>();
         messages.add(Map.of("role", "system", "content", system));
         int start = Math.max(0, history.size() - 10);
-        messages.addAll(history.subList(start, history.size()));
-        if (history.isEmpty() || !question.equals(history.getLast().get("content"))) {
-            messages.add(Map.of("role", "user", "content", question));
+        List<Map<String, Object>> recentHistory = new ArrayList<>(history.subList(start, history.size()));
+        if (!recentHistory.isEmpty()
+                && "user".equals(value(recentHistory.getLast().get("role")))
+                && question.equals(value(recentHistory.getLast().get("content")))) {
+            recentHistory.removeLast();
         }
-        ChatModelClient.Completion completion = modelClient.complete(messages, cancellationSignal,
+        messages.addAll(recentHistory);
+        messages.add(Map.of("role", "user", "content", assembled.evidenceMessage()));
+        messages.add(Map.of("role", "user", "content", question));
+        Completion completion = modelClient.complete(messages, cancellationSignal,
                 remainingTokens, Duration.ofMinutes(2));
-        String answer = completion.content();
-        if (!references.isEmpty() && Boolean.TRUE.equals(prompt.get("enable_preset_reference"))) {
-            StringBuilder referenceBlock = new StringBuilder("\n\n");
-            for (int index = 0; index < references.size(); index++) {
-                Map<String, Object> reference = references.get(index);
-                referenceBlock.append("> [").append(index + 1).append("]. [")
-                        .append(reference.get("name")).append("](")
-                        .append(reference.get("url")).append(")\n");
-            }
-            answer += referenceBlock;
-        }
-        return new ChatModelClient.Completion(answer, completion.promptTokens(), completion.completionTokens(),
-                completion.provider(), completion.model());
+        return completion;
     }
 
-    private ChatModelClient.Completion extractiveFallback(
+    private Completion extractiveFallback(
             String question,
             List<Map<String, Object>> references,
             RunResult agentResult
@@ -561,31 +507,9 @@ public class ChatService {
             if (!agentResult.usage().stopReason().equals("EVIDENCE_SUFFICIENT")) {
                 answer.append("\n现有证据没有完整覆盖问题中的全部关系或下游影响，以上结论应视为当前知识库范围内的最佳可验证结果，不推断未被文档支持的部分。\n");
             }
-            answer.append("\n");
-            for (int index = 0; index < references.size(); index++) {
-                Map<String, Object> reference = references.get(index);
-                answer.append("> [").append(index + 1).append("]. [")
-                        .append(reference.get("name")).append("](")
-                        .append(reference.get("url")).append(")\n");
-            }
         }
         int tokens = Math.max(1, answer.length() / 3);
-        return new ChatModelClient.Completion(answer.toString(), 0, tokens, "agentic", "extractive-fallback");
-    }
-
-    private Map<String, Object> app(String kbId, int type) {
-        List<Map<String, Object>> apps = store.query(
-                "SELECT id, kb_id, type, settings FROM apps WHERE kb_id = ? AND type = ?",
-                store.rowMapper(), kbId, type);
-        if (!apps.isEmpty()) {
-            return apps.getFirst();
-        }
-        String id = UUID.randomUUID().toString();
-        store.update(
-                "INSERT INTO apps(id, kb_id, name, type, settings, created_at, updated_at) "
-                        + "VALUES (?, ?, '', ?, '{}'::jsonb, now(), now())",
-                id, kbId, type);
-        return Map.of("id", id, "kb_id", kbId, "type", type, "settings", Map.of());
+        return new Completion(answer.toString(), 0, tokens, "agentic", "extractive-fallback");
     }
 
     private String baseUrl(String kbId) {
@@ -652,19 +576,6 @@ public class ChatService {
                 })
                 .filter(attachment -> !attachment.content().isBlank())
                 .toList();
-    }
-
-    private String postgresTextArray(List<String> values) {
-        StringBuilder result = new StringBuilder("{");
-        for (int index = 0; index < values.size(); index++) {
-            if (index > 0) {
-                result.append(',');
-            }
-            result.append('"')
-                    .append(values.get(index).replace("\\", "\\\\").replace("\"", "\\\""))
-                    .append('"');
-        }
-        return result.append('}').toString();
     }
 
     public record ChatAttachment(String name, String type, long size, String content) {

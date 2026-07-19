@@ -16,20 +16,53 @@ import org.springframework.stereotype.Component;
 public class AgentRunRegistry {
 
     private final Map<String, AtomicBoolean> runs = new ConcurrentHashMap<>();
+    private final AgenticRagStore store;
+
+    public AgentRunRegistry(AgenticRagStore store) {
+        this.store = store;
+    }
 
     public CancellationSignal register(String runId) {
         AtomicBoolean cancelled = new AtomicBoolean(false);
         AtomicBoolean existing = runs.putIfAbsent(runId, cancelled);
         AtomicBoolean signal = existing == null ? cancelled : existing;
-        return signal::get;
+        return new DistributedSignal(runId, signal, store);
     }
 
     public boolean cancel(String runId) {
         AtomicBoolean signal = runs.get(runId);
-        return signal != null && !signal.getAndSet(true);
+        boolean local = signal != null && !signal.getAndSet(true);
+        return store.requestCancellation(runId) || local;
     }
 
     public void complete(String runId) {
         runs.remove(runId);
+    }
+
+    private static final class DistributedSignal implements CancellationSignal {
+        private final String runId;
+        private final AtomicBoolean local;
+        private final AgenticRagStore store;
+        private volatile long checkedAt;
+        private volatile boolean cancelled;
+
+        private DistributedSignal(String runId, AtomicBoolean local, AgenticRagStore store) {
+            this.runId = runId;
+            this.local = local;
+            this.store = store;
+        }
+
+        @Override
+        public boolean isCancelled() {
+            if (local.get() || cancelled) {
+                return true;
+            }
+            long now = System.nanoTime();
+            if (now - checkedAt > 200_000_000L) {
+                checkedAt = now;
+                cancelled = store.cancellationRequested(runId);
+            }
+            return cancelled;
+        }
     }
 }

@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -29,14 +29,14 @@ public class FileService {
     private static final long MAX_REMOTE_FILE_SIZE = 50L * 1024 * 1024;
 
     private final ObjectStorageService storage;
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
 
-    public FileService(ObjectStorageService storage, MyBatisStore store, JsonMaps jsonMaps) {
+    public FileService(ObjectStorageService storage, JdbcMaps store, JsonMaps jsonMaps) {
         this.storage = storage;
         this.store = store;
         this.jsonMaps = jsonMaps;

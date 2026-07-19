@@ -6,7 +6,7 @@ import com.chaitin.niuniuwiki.security.AuthService;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 
 /**
@@ -18,11 +18,11 @@ import org.springframework.stereotype.Service;
 @Service
 public class NodeReleaseService {
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final AuthService authService;
 
-    public NodeReleaseService(MyBatisStore store, JsonMaps jsonMaps, AuthService authService) {
+    public NodeReleaseService(JdbcMaps store, JsonMaps jsonMaps, AuthService authService) {
         this.store = store;
         this.jsonMaps = jsonMaps;
         this.authService = authService;

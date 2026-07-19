@@ -7,7 +7,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import com.chaitin.niuniuwiki.persistence.MyBatisStore;
+import com.chaitin.niuniuwiki.persistence.JdbcMaps;
 import org.springframework.stereotype.Service;
 
 /**
@@ -19,11 +19,11 @@ import org.springframework.stereotype.Service;
 @Service
 public class ConversationService {
 
-    private final MyBatisStore store;
+    private final JdbcMaps store;
     private final JsonMaps jsonMaps;
     private final AuthService authService;
 
-    public ConversationService(MyBatisStore store, JsonMaps jsonMaps, AuthService authService) {
+    public ConversationService(JdbcMaps store, JsonMaps jsonMaps, AuthService authService) {
         this.store = store;
         this.jsonMaps = jsonMaps;
         this.authService = authService;
@@ -151,11 +151,10 @@ public class ConversationService {
         if (number(info.get("score")) != 0) {
             throw new com.chaitin.niuniuwiki.common.ApiException("already voted for this message, please do not vote again");
         }
-        Map<String, Object> feedback = new LinkedHashMap<>();
-        feedback.put("score", request.getOrDefault("score", 0));
-        feedback.put("feedback_type", request.getOrDefault("type", ""));
-        feedback.put("feedback_content", request.getOrDefault("feedback_content", ""));
-        store.update("UPDATE conversation_messages SET info = ?::jsonb WHERE id = ?", jsonMaps.json(feedback), messageId);
+        info.put("score", request.getOrDefault("score", 0));
+        info.put("feedback_type", request.getOrDefault("type", ""));
+        info.put("feedback_content", request.getOrDefault("feedback_content", ""));
+        store.update("UPDATE conversation_messages SET info = ?::jsonb WHERE id = ?", jsonMaps.json(info), messageId);
     }
 
     private void require(String kbId) {
